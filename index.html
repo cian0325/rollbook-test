@@ -1915,6 +1915,7 @@ function vAlbum(s){
   if(WK.title===null)WK.title=wkTopic(s,WK.term);
   const ph=WK.photos,groups=[];
   if(ph)for(const p of ph){const key=(p.term||'')+'|'+(p.work||'');let g=groups.find(x=>x.key===key);if(!g)groups.push(g={key,work:p.work,tn:(termById(p.term)||{}).name||p.termName||'',items:[]});g.items.push(p)}
+  for(const g of groups)g.items.sort((x,y)=>(x.at||0)-(y.at||0));
   return `<div class="stack">${head}
   <div class="card" style="padding:14px"><div class="stack">
     ${wkPickers(s,WK.term,WK.title,{term:'wk-term',work:'wk-work',title:'wk-title',custom:WK.custom,onTerm:'App.wkTerm',onWork:'App.wkWork',onTitle:'App.wkTitle'})}
@@ -1923,7 +1924,7 @@ function vAlbum(s){
     <label class="btn" style="text-align:center">從相簿選<input type="file" id="wk-lib" accept="image/*" multiple hidden onchange="App.wkFiles(this)"></label></div>
   </div></div>
   ${ph===null?`<div class="card empty">${WK.err?`<b>讀不到相簿</b>${esc(WK.err)}<div style="margin-top:10px"><button class="btn" onclick="App.wkReload()">再試一次</button></div>`:'載入照片中…'}</div>`
-   :groups.length?groups.map(g=>`<div class="wk-group"><div class="row"><b>${esc(g.work||'未命名')}</b>${g.tn?`<span class="pill plan">${esc(g.tn)}</span>`:''}<span class="spacer"></span><span class="muted num">${md(g.items[g.items.length-1].date)}${g.items[0].date!==g.items[g.items.length-1].date?'–'+md(g.items[0].date):''} · ${g.items.length} 張</span></div>
+   :groups.length?groups.map(g=>`<div class="wk-group"><div class="row"><b>${esc(g.work||'未命名')}</b>${g.tn?`<span class="pill plan">${esc(g.tn)}</span>`:''}<span class="spacer"></span><span class="muted num">${md(g.items[0].date)}${g.items[0].date!==g.items[g.items.length-1].date?'–'+md(g.items[g.items.length-1].date):''} · ${g.items.length} 張</span></div>
      <div class="wk-grid">${g.items.map(p=>`<button class="wk-th" onclick="App.wkView('${p.id}')" aria-label="${esc(p.work||'')} ${p.date}"><img src="${p.thumb}" alt="" loading="lazy">${p.kind==='final'?'<i>完成</i>':''}</button>`).join('')}</div></div>`).join('')
    :`<div class="card empty"><b>還沒有照片</b>選好期別和作品，按「拍照」開始記錄</div>`}
   </div>`;

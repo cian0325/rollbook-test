@@ -107,8 +107,10 @@ function show(a){
   $('gate').hidden=true;$('album').hidden=false;$('go').disabled=false;$('go').textContent='打開相簿';
   $('a-name').textContent=(a.name||'')+' 的作品';$('a-level').textContent=a.level||'作品相簿';document.title=(a.name||'')+' 的作品相簿';
   const groups=[];for(const p of photos){const key=(p.term||p.termName||'')+'|'+(p.work||'');let g=groups.find(x=>x.key===key);if(!g)groups.push(g={key,work:p.work,tn:p.termName||'',items:[]});g.items.push(p)}
+  // 每件作品內由舊到新（草稿 → 上色 → 完成），作品之間仍是最新的在上面；看大圖的上一張／下一張照這個順序
+  for(const g of groups)g.items.sort((x,y)=>(x.at||0)-(y.at||0));photos=groups.flatMap(g=>g.items);
   $('a-count').textContent=photos.length?`${groups.length} 件作品・${photos.length} 張照片`:'';
-  $('groups').innerHTML=groups.length?groups.map(g=>{const a0=g.items[g.items.length-1].date,b0=g.items[0].date;
+  $('groups').innerHTML=groups.length?groups.map(g=>{const a0=g.items[0].date,b0=g.items[g.items.length-1].date;
     return `<div class="group"><div class="ghead"><h2>${esc(g.work||'未命名')}${g.tn?`<small class="tn">${esc(g.tn)}</small>`:''}</h2><span class="muted num">${md(a0)}${a0!==b0?'–'+md(b0):''}・${g.items.length} 張</span></div>
     <div class="grid">${g.items.map(p=>`<button class="th" data-id="${esc(p.id)}" aria-label="${esc(g.work||'作品')} ${esc(p.date)}"><img src="${esc(p.thumb)}" alt="" loading="lazy">${p.kind==='final'?'<i>完成</i>':''}</button>`).join('')}</div></div>`}).join('')
     :'<div class="card empty">老師還沒有上傳照片，過幾天再來看看。</div>';
