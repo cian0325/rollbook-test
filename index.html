@@ -422,6 +422,8 @@ nav.tabs .ic{width:22px;height:22px}
 .crop canvas{position:absolute;inset:0;width:100%;height:100%;border-radius:8px}
 .crop svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
 .crop polygon{fill:color-mix(in srgb,var(--indigo) 16%,transparent);stroke:var(--card);stroke-width:3;vector-effect:non-scaling-stroke;stroke-linejoin:round;paint-order:stroke;filter:drop-shadow(0 0 1px #000)}
+.wk-dest{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px;padding:8px 10px;border-radius:10px;background:var(--soft);font-size:14px}
+.wk-dest>span:first-child{color:var(--ink-2)}
 .loupe{position:absolute;width:112px;height:112px;border-radius:50%;overflow:hidden;border:3px solid var(--card);box-shadow:0 4px 16px rgb(0 0 0 / .45);pointer-events:none;z-index:2;top:8px;left:8px}
 .loupe[hidden]{display:none}
 .loupe canvas{position:static;width:100%;height:100%;border-radius:0}
@@ -1662,13 +1664,31 @@ const cloudActions={
 /* ---------- 作品（照片存 Firestore：albums/{aid}、/photos 縮圖、/full 原圖） ----------
    aid = SHA-256(家長密碼)。家長頁 album.html 不用登入，只能用密碼算出 aid 後讀那一本相簿。
    老師端要登入雲端才能上傳。照片不進 localStorage，也不走 parts 同步；學生的 album{code,aid,count} 存在 S。 */
-const WK={sid:null,photos:null,q:'',items:[],total:0,done:0,cur:null,busy:false,kind:'process',title:null,drag:-1};
+const WK={sid:null,photos:null,q:'',items:[],term:null,custom:false,total:0,done:0,cur:null,busy:false,kind:'process',title:null,drag:-1};
 const albumsCol=()=>CLOUD.db.collection('test_albums');
 const codeNorm=c=>String(c||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
 async function sha256(s){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
 function newCode(){const A='ABCDEFGHJKMNPQRSTUVWXYZ23456789',r=crypto.getRandomValues(new Uint8Array(8));const t=[...r].map(x=>A[x%A.length]).join('');return t.slice(0,4)+'-'+t.slice(4)}
-function wkTopic(s){const T=termAt(today()),sl=slot(curSlot(s));if(!T||!T.topics||!sl||!T.topics[sl.level])return '';
-  return T.topics[sl.level][Math.floor((parse(today())-parse(T.start))/6048e5)]||''}
+// 期別與作品：作品清單 = 該期這個班級的每週主題 + 相簿裡這一期已經有的作品名稱
+const termsDesc=()=>S.terms.slice().sort((a,b)=>b.start.localeCompare(a.start));
+const wkTermDefault=()=>((termAt(today())||termsDesc()[0])||{}).id||'';
+function wkLevelOf(s){const sl=slot(curSlot(s));return (sl&&sl.level)||s.level}
+function wkRawTopics(s,tid){const T=termById(tid);if(!T||!T.topics)return [];return (T.topics[wkLevelOf(s)]||T.topics[s.level]||[]).map(x=>String(x||'').trim())}
+// 同一個主題連續好幾週合成一項：「第 1–3 週・看牙醫」
+function wkTopics(s,tid){const out=[];wkRawTopics(s,tid).forEach((name,i)=>{if(!name)return;const g=out.find(x=>x.name===name);
+  if(g){g.w2=i+1}else out.push({name,w1:i+1,w2:i+1})});return out.map(x=>({name:x.name,w:x.w1===x.w2?x.w1:x.w1+'–'+x.w2}))}
+function wkTopic(s,tid){const T=termById(tid===undefined?wkTermDefault():tid);if(!T||!(T.start<=today()&&today()<=tEnd(T)))return '';
+  return wkRawTopics(s,T.id)[Math.floor((parse(today())-parse(T.start))/6048e5)]||''}
+function wkWorkOpts(s,tid){const t=wkTopics(s,tid),seen=new Set(t.map(x=>x.name)),own=[];
+  for(const p of WK.photos||[])if((p.term||'')===(tid||'')&&p.work&&!seen.has(p.work)){seen.add(p.work);own.push(p.work)}
+  return {t,own,all:seen}}
+function wkPickers(s,tid,work,ids){const T=termById(tid),o=wkWorkOpts(s,tid),cur=wkTopic(s,tid),custom=ids.custom||(work&&!o.all.has(work));
+  return `<label class="f">期別<select id="${ids.term}" onchange="${ids.onTerm}(this.value)">${termsDesc().map(t=>`<option value="${t.id}"${t.id===tid?' selected':''}>${esc(t.name)}${termAt(today())===t?'（本期）':''}</option>`).join('')}<option value=""${!tid?' selected':''}>不指定期別</option></select></label>
+  <label class="f">作品<select id="${ids.work}" onchange="${ids.onWork}(this.value)"><option value=""${!work&&!custom?' selected':''}>請選擇作品</option>
+    ${o.t.length?`<optgroup label="${esc(T?T.name:'')} 每週主題">${o.t.map(x=>`<option value="${esc(x.name)}"${!custom&&x.name===work?' selected':''}>第 ${x.w} 週・${esc(x.name)}${x.name===cur?'（本週）':''}</option>`).join('')}</optgroup>`:''}
+    ${o.own.length?`<optgroup label="相簿裡的作品">${o.own.map(n=>`<option value="${esc(n)}"${!custom&&n===work?' selected':''}>${esc(n)}</option>`).join('')}</optgroup>`:''}
+    <option value="__new"${custom?' selected':''}>＋ 新作品（自己輸入名稱）</option></select></label>
+  ${custom?`<input class="inp" id="${ids.title}" value="${esc(work)}" placeholder="輸入作品名稱，例如：書本設計" oninput="${ids.onTitle}(this.value)">`:''}`}
 const albumUrl=()=>{try{return new URL('album.html',location.href).href.split('?')[0]}catch(e){return 'album.html'}};
 
 /* 影像處理 */
@@ -1891,20 +1911,21 @@ function vAlbum(s){
     <p class="muted" style="margin:0">建立後會產生一組家長密碼。知道密碼的人可以在家長頁看到這本相簿裡的所有照片，看不到其他學生，也看不到點名和繳費。</p>
     <label class="check"><input type="checkbox" id="wk-consent"> 家長已經同意把孩子的作品照片放到線上</label>
     <button class="btn primary block" id="wk-create" onclick="App.wkCreate('${s.id}')">建立相簿</button></div></div></div>`;
-  if(WK.title===null)WK.title=wkTopic(s);
+  if(WK.term===null||(WK.term&&!termById(WK.term)))WK.term=wkTermDefault();
+  if(WK.title===null)WK.title=wkTopic(s,WK.term);
   const ph=WK.photos,groups=[];
-  if(ph)for(const p of ph){let g=groups.find(x=>x.work===p.work);if(!g)groups.push(g={work:p.work,items:[]});g.items.push(p)}
+  if(ph)for(const p of ph){const key=(p.term||'')+'|'+(p.work||'');let g=groups.find(x=>x.key===key);if(!g)groups.push(g={key,work:p.work,tn:(termById(p.term)||{}).name||p.termName||'',items:[]});g.items.push(p)}
   return `<div class="stack">${head}
   <div class="card" style="padding:14px"><div class="stack">
-    <label class="f">作品名稱<input id="wk-title" value="${esc(WK.title)}" placeholder="例如：書本設計" oninput="App.wkTitle(this.value)"></label>
+    ${wkPickers(s,WK.term,WK.title,{term:'wk-term',work:'wk-work',title:'wk-title',custom:WK.custom,onTerm:'App.wkTerm',onWork:'App.wkWork',onTitle:'App.wkTitle'})}
     <div class="row"><div class="seg"><button class="${WK.kind==='process'?'on':''}" onclick="App.wkKind('process')">繪畫過程</button><button class="${WK.kind==='final'?'on':''}" onclick="App.wkKind('final')">完成作品</button></div></div>
     <div class="grid2"><label class="btn primary" style="text-align:center">拍照<input type="file" id="wk-cam" accept="image/*" capture="environment" hidden onchange="App.wkFiles(this)"></label>
     <label class="btn" style="text-align:center">從相簿選<input type="file" id="wk-lib" accept="image/*" multiple hidden onchange="App.wkFiles(this)"></label></div>
   </div></div>
   ${ph===null?`<div class="card empty">${WK.err?`<b>讀不到相簿</b>${esc(WK.err)}<div style="margin-top:10px"><button class="btn" onclick="App.wkReload()">再試一次</button></div>`:'載入照片中…'}</div>`
-   :groups.length?groups.map(g=>`<div class="wk-group"><div class="row"><b>${esc(g.work||'未命名')}</b><span class="muted num">${md(g.items[g.items.length-1].date)}${g.items[0].date!==g.items[g.items.length-1].date?'–'+md(g.items[0].date):''} · ${g.items.length} 張</span></div>
+   :groups.length?groups.map(g=>`<div class="wk-group"><div class="row"><b>${esc(g.work||'未命名')}</b>${g.tn?`<span class="pill plan">${esc(g.tn)}</span>`:''}<span class="spacer"></span><span class="muted num">${md(g.items[g.items.length-1].date)}${g.items[0].date!==g.items[g.items.length-1].date?'–'+md(g.items[0].date):''} · ${g.items.length} 張</span></div>
      <div class="wk-grid">${g.items.map(p=>`<button class="wk-th" onclick="App.wkView('${p.id}')" aria-label="${esc(p.work||'')} ${p.date}"><img src="${p.thumb}" alt="" loading="lazy">${p.kind==='final'?'<i>完成</i>':''}</button>`).join('')}</div></div>`).join('')
-   :`<div class="card empty"><b>還沒有照片</b>填好作品名稱，按「拍照」開始記錄</div>`}
+   :`<div class="card empty"><b>還沒有照片</b>選好期別和作品，按「拍照」開始記錄</div>`}
   </div>`;
 }
 // 自動裁切的信心門檻：高於這個就不用老師看，直接算好
@@ -1914,11 +1935,18 @@ function wkBusySheet(t){sheet(`<h2>${t}</h2><div class="wk-prog"><i style="width
 function wkReview(){
   const it=WK.items;if(!it.length){WK.cur=null;closeSheet();render();return}
   const bad=it.filter(x=>x.crop&&x.conf<WK_OK).length;
+  const T=termById(WK.term);
   sheet(`<h2>確認 ${it.length} 張照片</h2>
+  <div class="wk-dest"><span>存到</span><b>${esc((WK.title||'').trim())}</b>${T?`<span class="pill plan">${esc(T.name)}</span>`:''}<span class="pill">${WK.kind==='final'?'完成作品':'繪畫過程'}</span></div>
   <p class="muted" style="margin-top:0">${bad?`有 <b>${bad}</b> 張不確定畫紙邊緣，標「請檢查」，點一下就能調整。`:'都已經自動裁切好了。'}點任何一張可以調整四個角。</p>
   <div class="wk-rv">${it.map((x,i)=>`<button class="wk-th${x.crop&&x.conf<WK_OK?' warn':''}" onclick="App.wkEdit(${i})" aria-label="第 ${i+1} 張"><img src="${x.prev}" alt="">${!x.crop?'<i>整張</i>':x.conf<WK_OK?'<i class="w">請檢查</i>':''}</button>`).join('')}</div>
   <div class="stack" style="margin-top:12px"><button class="btn primary block" id="wk-up" onclick="App.wkUploadAll()">全部上傳（${it.length} 張）</button>
   <button class="btn block" onclick="App.wkCancel()">取消</button></div>`)}
+function wkMetaSheet(){const e=WK.ed,s=stu(WK.sid);
+  sheet(`<h2>改期別／作品</h2><div class="stack">
+  ${wkPickers(s,e.term,e.work,{term:'wke-term',work:'wke-work',title:'wke-title',custom:e.custom,onTerm:'App.wkEdTerm',onWork:'App.wkEdWork',onTitle:'App.wkEdTitle'})}
+  <div class="row"><div class="seg"><button class="${e.kind==='process'?'on':''}" onclick="App.wkEdKind('process')">繪畫過程</button><button class="${e.kind==='final'?'on':''}" onclick="App.wkEdKind('final')">完成作品</button></div></div>
+  <div class="grid2"><button class="btn" onclick="App.wkView('${e.pid}')">返回</button><button class="btn primary" id="wke-save" onclick="App.wkEdSave()">儲存</button></div></div>`)}
 function cropSheet(){
   const c=WK.cur.c,x=WK.items[WK.cur.i];
   sheet(`<h2>調整裁切（第 ${WK.cur.i+1} 張）</h2>
@@ -1980,10 +2008,12 @@ async function wkPrep(files){
   wkReview()}
 const worksActions={
   wkQ(v){WK.q=v;render();const i=$('#wk-q');if(i&&i.focus){i.focus();i.setSelectionRange(v.length,v.length)}},
-  wkOpen(id){WK.sid=id;WK.photos=null;WK.title=null;WK.err='';render();window.scrollTo(0,0);if(stu(id).album)wkLoad()},
+  wkOpen(id){WK.sid=id;WK.photos=null;WK.title=null;WK.term=null;WK.custom=false;WK.err='';render();window.scrollTo(0,0);if(stu(id).album)wkLoad()},
   wkBack(){WK.sid=null;WK.photos=null;render()},
   wkReload(){WK.err='';render();wkLoad()},
   wkTitle(v){WK.title=v},
+  wkTerm(v){const s=stu(WK.sid);WK.term=v;WK.custom=false;WK.title=wkTopic(s,v);render()},
+  wkWork(v){if(v==='__new'){WK.custom=true;WK.title='';render();const i=$('#wk-title');if(i&&i.focus)i.focus();return}WK.custom=false;WK.title=v;render()},
   wkKind(k){WK.kind=k;render()},
   async wkCreate(id){const s=stu(id),b=$('#wk-create');if(!$('#wk-consent').checked){toast('請先確認家長已經同意');return}
     b.disabled=true;b.textContent='建立中…';
@@ -1992,7 +2022,7 @@ const worksActions={
       s.album={code,aid,count:0,consentAt:today()};save();WK.photos=[];render();toast('已建立相簿')}
     catch(e){b.disabled=false;b.textContent='建立相簿';toast('建立失敗：'+errMsg(e))}},
   wkFiles(inp){const fs=[...(inp.files||[])];inp.value='';if(!fs.length)return;
-    if(!(WK.title||'').trim()){toast('請先填作品名稱');return}
+    if(!(WK.title||'').trim()){toast('請先選擇作品');return}
     wkPrep(fs)},
   async wkEdit(i){const x=WK.items[i];if(!x||WK.busy)return;
     try{const c=await fileToCanvas(x.f);WK.cur={c,i,quad:x.quad.map(p=>p.slice())};cropSheet()}catch(e){toast('讀不到這張照片')}},
@@ -2004,7 +2034,7 @@ const worksActions={
     const a=albumsCol().doc(s.album.aid),fv=firebase.firestore.FieldValue,base=Date.now();
     for(const x of it){
       try{const c=await fileToCanvas(x.f),out=x.crop?warp(c,x.quad):c,img=toJpeg(out),thumb=thumbOf(out),pid=Date.now().toString(36)+uid();
-        const meta={work:(WK.title||'').trim(),kind:WK.kind,date:today(),at:base+ok,thumb,w:out.width,h:out.height};
+        const T=termById(WK.term),meta={work:(WK.title||'').trim(),term:T?T.id:'',termName:T?T.name:'',kind:WK.kind,date:today(),at:base+ok,thumb,w:out.width,h:out.height};
         const bt=CLOUD.db.batch();bt.set(a.collection('photos').doc(pid),meta);bt.set(a.collection('full').doc(pid),{img});bt.update(a,{count:fv.increment(1),updatedAt:fv.serverTimestamp()});
         await bt.commit();ok++;if(WK.photos)WK.photos.unshift({id:pid,...meta});s.album.count=(s.album.count||0)+1}
       catch(e){fail++;left.push(x);WK.lastErr=errMsg(e)}
@@ -2012,10 +2042,22 @@ const worksActions={
     WK.busy=false;if(ok)save();
     if(fail){WK.items=left;wkReview();toast(`已上傳 ${ok} 張，${fail} 張失敗：${WK.lastErr}`)}
     else{WK.items=[];closeSheet();render();toast(`已上傳 ${ok} 張`)}},
+  wkEditMeta(pid){const p=(WK.photos||[]).find(x=>x.id===pid);if(!p)return;WK.ed={pid,term:p.term||'',work:p.work||'',kind:p.kind||'process',custom:false};wkMetaSheet()},
+  wkEdTerm(v){WK.ed.term=v;WK.ed.custom=false;const o=wkWorkOpts(stu(WK.sid),v);if(!o.all.has(WK.ed.work))WK.ed.custom=!!WK.ed.work;wkMetaSheet()},
+  wkEdWork(v){if(v==='__new'){WK.ed.custom=true;WK.ed.work='';wkMetaSheet();const i=$('#wke-title');if(i&&i.focus)i.focus();return}WK.ed.custom=false;WK.ed.work=v;wkMetaSheet()},
+  wkEdTitle(v){WK.ed.work=v},
+  wkEdKind(k){WK.ed.kind=k;wkMetaSheet()},
+  async wkEdSave(){const e=WK.ed,s=stu(WK.sid),b=$('#wke-save');const work=(e.work||'').trim();if(!work){toast('請選擇作品');return}
+    const T=termById(e.term),patch={work,term:T?T.id:'',termName:T?T.name:'',kind:e.kind};if(b){b.disabled=true;b.textContent='儲存中…'}
+    try{await albumsCol().doc(s.album.aid).collection('photos').doc(e.pid).update(patch);
+      const p=(WK.photos||[]).find(x=>x.id===e.pid);if(p)Object.assign(p,patch);WK.ed=null;closeSheet();render();toast('已更新')}
+    catch(x){if(b){b.disabled=false;b.textContent='儲存'}toast('更新失敗：'+errMsg(x))}},
   async wkView(pid){const p=(WK.photos||[]).find(x=>x.id===pid),s=stu(WK.sid);if(!p)return;
     sheet(`<div class="row"><b>${esc(p.work||'未命名')}</b><span class="pill plan">${p.kind==='final'?'完成作品':'繪畫過程'}</span><span class="spacer"></span><span class="muted num">${p.date}</span></div>
     <img class="wk-full" id="wk-full" src="${p.thumb}" alt="${esc(p.work||'作品')}" style="aspect-ratio:${p.w}/${p.h}">
-    <div class="grid2" style="margin-top:12px"><button class="btn danger" id="wk-del" onclick="App.wkDel('${pid}')">刪除這張</button><button class="btn" onclick="App.close()">關閉</button></div>`);
+    <div class="muted" style="margin-top:8px">${esc((termById(p.term)||{}).name||p.termName||'未指定期別')}</div>
+    <div class="stack" style="margin-top:12px"><button class="btn block" onclick="App.wkEditMeta('${pid}')">改期別／作品</button>
+    <div class="grid2"><button class="btn danger" id="wk-del" onclick="App.wkDel('${pid}')">刪除這張</button><button class="btn" onclick="App.close()">關閉</button></div></div>`);
     try{const d=await albumsCol().doc(s.album.aid).collection('full').doc(pid).get();const im=$('#wk-full');if(d.exists&&im&&im.dataset!==undefined)im.src=d.data().img}catch(e){toast('原圖讀取失敗')}},
   async wkDel(pid){const b=$('#wk-del'),s=stu(WK.sid);if(!WK.delArm||WK.delArm!==pid){WK.delArm=pid;b.textContent='再按一次確定刪除';return}
     WK.delArm=null;b.disabled=true;
