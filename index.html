@@ -409,6 +409,13 @@ nav.tabs .ic{width:22px;height:22px}
 .wk-th{position:relative;border:0;padding:0;background:var(--soft);border-radius:10px;overflow:hidden;aspect-ratio:1}
 .wk-th img{width:100%;height:100%;object-fit:contain;display:block}
 .wk-th i{position:absolute;left:5px;bottom:5px;font-style:normal;font-size:10px;font-weight:700;background:var(--seal);color:var(--card);border-radius:5px;padding:0 5px}
+.wk-th i.w{background:var(--amber);color:#1b1407}
+.wk-th.warn{outline:2px solid var(--amber);outline-offset:-2px}
+.wk-rv{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-height:52vh;overflow:auto}
+@media (min-width:520px){.wk-rv{grid-template-columns:repeat(4,1fr)}}
+.wk-prog{height:8px;border-radius:99px;background:var(--soft);overflow:hidden;margin:14px 0}
+.wk-prog i{display:block;height:100%;width:0;background:var(--indigo);transition:width .2s}
+@media (prefers-reduced-motion:reduce){.wk-prog i{transition:none}}
 .wk-full{display:block;width:100%;max-height:62vh;object-fit:contain;background:var(--soft);border-radius:12px;margin-top:10px}
 .wk-code{font-size:30px;letter-spacing:.12em;text-align:center;padding:14px;border-radius:14px;background:var(--indigo-soft);color:var(--indigo);font-weight:600;-webkit-user-select:all;user-select:all}
 .crop{position:relative;margin:0 auto;touch-action:none;-webkit-user-select:none;user-select:none;border-radius:8px;background:var(--soft)}
@@ -1652,7 +1659,7 @@ const cloudActions={
 /* ---------- 作品（照片存 Firestore：albums/{aid}、/photos 縮圖、/full 原圖） ----------
    aid = SHA-256(家長密碼)。家長頁 album.html 不用登入，只能用密碼算出 aid 後讀那一本相簿。
    老師端要登入雲端才能上傳。照片不進 localStorage，也不走 parts 同步；學生的 album{code,aid,count} 存在 S。 */
-const WK={sid:null,photos:null,q:'',queue:[],total:0,cur:null,busy:false,kind:'process',title:null,drag:-1};
+const WK={sid:null,photos:null,q:'',items:[],total:0,done:0,cur:null,busy:false,kind:'process',title:null,drag:-1};
 const albumsCol=()=>CLOUD.db.collection('test_albums');
 const codeNorm=c=>String(c||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
 async function sha256(s){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
@@ -1667,28 +1674,175 @@ function fileToCanvas(file,max=1600){return new Promise((ok,no)=>{const u=URL.cr
     c.width=Math.max(1,Math.round(im.naturalWidth*k));c.height=Math.max(1,Math.round(im.naturalHeight*k));c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);ok(c)};
   im.onerror=()=>{URL.revokeObjectURL(u);no(new Error('這個檔案不是可以讀取的圖片'))};im.src=u})}
 function scaleCanvas(c,k){const o=document.createElement('canvas');o.width=Math.max(1,Math.round(c.width*k));o.height=Math.max(1,Math.round(c.height*k));o.getContext('2d').drawImage(c,0,0,o.width,o.height);return o}
-// 找畫紙四角：和邊緣底色差很多的最大一塊區域，取四個極點。找不到就回傳 null（整張）
-function detectQuad(c){
-  const k=Math.min(1,200/Math.max(c.width,c.height)),s=scaleCanvas(c,k),w=s.width,h=s.height,d=s.getContext('2d').getImageData(0,0,w,h).data;
-  let br=0,bg=0,bb=0,n=0;const edge=(x,y)=>{const i=(y*w+x)*4;br+=d[i];bg+=d[i+1];bb+=d[i+2];n++};
-  for(let x=0;x<w;x++){edge(x,0);edge(x,h-1)}for(let y=1;y<h-1;y++){edge(0,y);edge(w-1,y)}br/=n;bg/=n;bb/=n;
-  const dist=new Uint8Array(w*h),hist=new Array(256).fill(0);
-  for(let i=0;i<w*h;i++){const v=Math.min(255,Math.round((Math.abs(d[i*4]-br)+Math.abs(d[i*4+1]-bg)+Math.abs(d[i*4+2]-bb))/3));dist[i]=v;hist[v]++}
-  let sum=0;for(let i=0;i<256;i++)sum+=i*hist[i];let sb=0,wb=0,best=0,thr=40;
-  for(let t=0;t<256;t++){wb+=hist[t];if(!wb)continue;const wf=w*h-wb;if(!wf)break;sb+=t*hist[t];const mb=sb/wb,mf=(sum-sb)/wf,v=wb*wf*(mb-mf)*(mb-mf);if(v>best){best=v;thr=t}}
-  thr=Math.max(thr,18);
-  const lab=new Int32Array(w*h).fill(-1);let bestN=0,bestPts=null;const st=new Int32Array(w*h);
-  for(let i0=0;i0<w*h;i0++){if(dist[i0]<=thr||lab[i0]>=0)continue;let sp=0,cnt=0;st[sp++]=i0;lab[i0]=i0;
-    let a=[Infinity,0],b=[-Infinity,0],e=[-Infinity,0],f=[Infinity,0];
-    while(sp){const i=st[--sp],x=i%w,y=(i-x)/w;cnt++;
-      if(x+y<a[0])a=[x+y,i];if(x-y>b[0])b=[x-y,i];if(x+y>e[0])e=[x+y,i];if(x-y<f[0])f=[x-y,i];
-      if(x>0&&dist[i-1]>thr&&lab[i-1]<0){lab[i-1]=i0;st[sp++]=i-1}if(x<w-1&&dist[i+1]>thr&&lab[i+1]<0){lab[i+1]=i0;st[sp++]=i+1}
-      if(y>0&&dist[i-w]>thr&&lab[i-w]<0){lab[i-w]=i0;st[sp++]=i-w}if(y<h-1&&dist[i+w]>thr&&lab[i+w]<0){lab[i+w]=i0;st[sp++]=i+w}}
-    if(cnt>bestN){bestN=cnt;bestPts=[a[1],b[1],e[1],f[1]]}}
-  if(!bestPts||bestN<w*h*.12||bestN>w*h*.96)return null;
-  const q=bestPts.map(i=>[(i%w+.5)/k,(Math.floor(i/w)+.5)/k]);
-  const area=Math.abs(q.reduce((s,p,i)=>{const n2=q[(i+1)%4];return s+p[0]*n2[1]-n2[0]*p[1]},0))/2;
-  return area<c.width*c.height*.15?null:q;
+/* 找畫紙四角（第二版）
+   1. 縮到 256 像素，用照片四周的顏色當「桌面」（最多 3 種顏色，可處理格子桌巾）。
+   2. 和桌面顏色差很多的地方 = 可能是畫紙，取最大的一塊，補洞。
+   3. 在這塊的邊緣找 4 條最直的線（霍夫轉換），兩兩交叉 = 四個角。
+      手擋住一角、紙被雜物碰到時，那段邊緣不直，不會影響其他三條邊。
+   4. 回傳 {q:[左上,右上,右下,左下], conf:0~1}。conf 高才自動裁切，低的讓老師手動拖角。 */
+function detectPaper(src){
+  const S=256,k=Math.min(1,S/Math.max(src.width,src.height));
+  const w=Math.max(8,Math.round(src.width*k)),h=Math.max(8,Math.round(src.height*k)),N=w*h;
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;const g=cv.getContext('2d');g.drawImage(src,0,0,w,h);
+  const d=g.getImageData(0,0,w,h).data;
+  // 顏色特徵：亮度＋紅綠＋黃藍（對色差比 RGB 直接相減敏感）
+  const F=new Float32Array(N*3);
+  for(let i=0;i<N;i++){const r=d[i*4],gg=d[i*4+1],b=d[i*4+2];F[i*3]=(r+gg+b)/3;F[i*3+1]=(r-gg)*1.3;F[i*3+2]=((r+gg)/2-b)*1.3}
+  // 1. 桌面顏色：邊框像素做 k-means（k=3）
+  const m=Math.max(2,Math.round(Math.min(w,h)*.03)),B=[];
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(x<m||y<m||x>=w-m||y>=h-m)B.push(y*w+x);
+  let C=[0,.5,.95].map(t=>{const s=B.slice().sort((p,q)=>F[p*3]-F[q*3]);const i=s[Math.floor(t*(s.length-1))];return [F[i*3],F[i*3+1],F[i*3+2]]});
+  let cnt=[0,0,0];
+  for(let it=0;it<8;it++){const acc=C.map(()=>[0,0,0]);cnt=[0,0,0];
+    for(const i of B){let bj=0,bd=1e9;for(let j=0;j<3;j++){const dd=(F[i*3]-C[j][0])**2+(F[i*3+1]-C[j][1])**2+(F[i*3+2]-C[j][2])**2;if(dd<bd){bd=dd;bj=j}}
+      acc[bj][0]+=F[i*3];acc[bj][1]+=F[i*3+1];acc[bj][2]+=F[i*3+2];cnt[bj]++}
+    C=C.map((c,j)=>cnt[j]?acc[j].map(v=>v/cnt[j]):c)}
+  const bg=C.filter((c,j)=>cnt[j]>=B.length*.08);
+  const dist=new Float32Array(N);let mx=0;
+  for(let i=0;i<N;i++){let bd=1e9;for(const c of bg){const dd=Math.hypot(F[i*3]-c[0],F[i*3+1]-c[1],F[i*3+2]-c[2]);if(dd<bd)bd=dd}dist[i]=bd;if(bd>mx)mx=bd}
+  // Otsu 自動門檻
+  const hist=new Uint32Array(256),q8=new Uint8Array(N);
+  for(let i=0;i<N;i++){const v=Math.min(255,Math.round(dist[i]/Math.max(1,mx)*255));q8[i]=v;hist[v]++}
+  let sum=0;for(let t=0;t<256;t++)sum+=t*hist[t];let sB=0,wB=0,best=-1,thr=30;
+  for(let t=0;t<256;t++){wB+=hist[t];if(!wB)continue;const wF=N-wB;if(!wF)break;sB+=t*hist[t];const v=wB*wF*(sB/wB-(sum-sB)/wF)**2;if(v>best){best=v;thr=t}}
+  thr=Math.max(thr,Math.round(10/Math.max(1,mx)*255));
+  let M=new Uint8Array(N);for(let i=0;i<N;i++)M[i]=q8[i]>thr?1:0;
+  // 形態學：先閉合（補小縫）
+  const morph=(A,dil)=>{const T=new Uint8Array(N),O=new Uint8Array(N);
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x,a=A[i],l=x>0?A[i-1]:a,r=x<w-1?A[i+1]:a;T[i]=dil?(a|l|r):(a&l&r)}
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x,a=T[i],u=y>0?T[i-w]:a,dn=y<h-1?T[i+w]:a;O[i]=dil?(a|u|dn):(a&u&dn)}return O};
+  M=morph(morph(M,1),0);
+  // 2. 最大的一塊（碰到邊框太多的扣分：那通常是桌面的一部分）
+  const lab=new Int32Array(N).fill(-1),st=new Int32Array(N),comps=[];
+  for(let s=0;s<N;s++){if(!M[s]||lab[s]>=0)continue;const id=comps.length;let n=0,edge=0,sp=0;st[sp++]=s;lab[s]=id;
+    while(sp){const p=st[--sp],x=p%w,y=(p-x)/w;n++;if(x===0||y===0||x===w-1||y===h-1)edge++;
+      if(x>0&&M[p-1]&&lab[p-1]<0){lab[p-1]=id;st[sp++]=p-1}if(x<w-1&&M[p+1]&&lab[p+1]<0){lab[p+1]=id;st[sp++]=p+1}
+      if(y>0&&M[p-w]&&lab[p-w]<0){lab[p-w]=id;st[sp++]=p-w}if(y<h-1&&M[p+w]&&lab[p+w]<0){lab[p+w]=id;st[sp++]=p+w}}
+    comps.push({id,n,edge,score:n*(1-Math.min(.8,edge/(2*(w+h))*1.6))})}
+  if(!comps.length)return null;
+  comps.sort((a,b)=>b.score-a.score);const cp=comps[0];
+  if(cp.n<N*.03)return null;
+  // 低門檻擴張：從這塊往外長到「只要和桌面有一點點不同」的相連像素（白紙放淺色桌、紙邊沒畫到的留白）
+  {const bd=B.map(i=>dist[i]).sort((a,b)=>a-b);const lo=Math.max(4,bd[Math.floor(bd.length*.97)]*1.15);
+   let sp=0;for(let i=0;i<N;i++)if(lab[i]===cp.id)st[sp++]=i;
+   while(sp){const p=st[--sp],x=p%w,y=(p-x)/w;
+     const tryp=j=>{if(lab[j]!==cp.id&&dist[j]>lo){lab[j]=cp.id;st[sp++]=j;cp.n++}};
+     if(x>0)tryp(p-1);if(x<w-1)tryp(p+1);if(y>0)tryp(p-w);if(y<h-1)tryp(p+w)}
+   if(cp.n>N*.97)return null}
+  // 補洞：從外面灌水，灌不到的就是這塊裡面
+  const out=new Uint8Array(N);let sp=0;
+  const push=i=>{if(!out[i]&&lab[i]!==cp.id){out[i]=1;st[sp++]=i}};
+  for(let x=0;x<w;x++){push(x);push((h-1)*w+x)}for(let y=0;y<h;y++){push(y*w);push(y*w+w-1)}
+  while(sp){const p=st[--sp],x=p%w,y=(p-x)/w;if(x>0)push(p-1);if(x<w-1)push(p+1);if(y>0)push(p-w);if(y<h-1)push(p+w)}
+  const R=new Uint8Array(N);let area=0;for(let i=0;i<N;i++)if(!out[i]){R[i]=1;area++}
+  // 邊緣點
+  const E=[],isE=new Uint8Array(N);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x;if(!R[i])continue;
+    if(x===0||y===0||x===w-1||y===h-1||!R[i-1]||!R[i+1]||!R[i-w]||!R[i+w]){E.push(x,y);isE[i]=1}}
+  // 3. 霍夫轉換找直線
+  const NT=180,diag=Math.ceil(Math.hypot(w,h)),NR=2*diag+1,acc=new Uint16Array(NT*NR);
+  const cs=new Float32Array(NT),sn=new Float32Array(NT);for(let t=0;t<NT;t++){cs[t]=Math.cos(t*Math.PI/NT);sn[t]=Math.sin(t*Math.PI/NT)}
+  for(let e=0;e<E.length;e+=2){const x=E[e],y=E[e+1];for(let t=0;t<NT;t++){acc[t*NR+Math.round(x*cs[t]+y*sn[t])+diag]++}}
+  const lines=[],A2=acc.slice();
+  for(let n=0;n<14;n++){let bi=0,bv=0;for(let i=0;i<A2.length;i++)if(A2[i]>bv){bv=A2[i];bi=i}
+    if(bv<Math.max(12,Math.min(w,h)*.12))break;
+    const t=Math.floor(bi/NR),r=bi%NR-diag;lines.push({t,r,v:bv});
+    for(let dt=-7;dt<=7;dt++){const tt=(t+dt+NT)%NT,flip=(t+dt<0||t+dt>=NT);const rr=flip?-r:r;
+      for(let dr=-7;dr<=7;dr++){const ri=rr+dr+diag;if(ri>=0&&ri<NR)A2[tt*NR+ri]=0}}}
+  if(lines.length<4)return null;
+  const angD=(a,b)=>{const x=Math.abs(a-b)%NT;return Math.min(x,NT-x)};
+  const inter=(L1,L2)=>{const a=cs[L1.t],b=sn[L1.t],c=cs[L2.t],e=sn[L2.t],det=a*e-b*c;if(Math.abs(det)<1e-6)return null;return [(L1.r*e-b*L2.r)/det,(a*L2.r-L1.r*c)/det]};
+  const pairs=[];for(let i=0;i<lines.length;i++)for(let j=i+1;j<lines.length;j++){const L1=lines[i],L2=lines[j];
+    if(angD(L1.t,L2.t)<=40){const r2=(Math.abs(L1.t-L2.t)>90?-L2.r:L2.r);if(Math.abs(L1.r-r2)>=Math.min(w,h)*.12)pairs.push([L1,L2])}}
+  const inPoly=(P,x,y)=>{let s=false;for(let i=0,j=3;i<4;j=i++){const a=P[i],b=P[j];if((a[1]>y)!==(b[1]>y)&&x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0])s=!s}return s};
+  const order=P=>{const cx=P.reduce((s,p)=>s+p[0],0)/4,cy=P.reduce((s,p)=>s+p[1],0)/4;
+    const o=P.slice().sort((a,b)=>Math.atan2(a[1]-cy,a[0]-cx)-Math.atan2(b[1]-cy,b[0]-cx));
+    let s0=0;for(let i=1;i<4;i++)if(o[i][0]+o[i][1]<o[s0][0]+o[s0][1])s0=i;return [0,1,2,3].map(i=>o[(s0+i)%4])};
+  const polyArea=P=>Math.abs(P.reduce((s,p,i)=>{const n=P[(i+1)%4];return s+p[0]*n[1]-n[0]*p[1]},0))/2;
+  let bestQ=null,bestS=-1,bestIoU=0;
+  const step=2;
+  for(let a=0;a<pairs.length;a++)for(let b=a+1;b<pairs.length;b++){
+    const [A1,A3]=pairs[a],[B1,B3]=pairs[b];
+    if([A1,A3].some(L=>L===B1||L===B3))continue;
+    const ang=angD(A1.t,B1.t);if(ang<50)continue;
+    const P=[inter(A1,B1),inter(B1,A3),inter(A3,B3),inter(B3,A1)];
+    if(P.some(p=>!p||p[0]<-w*.15||p[0]>w*1.15||p[1]<-h*.15||p[1]>h*1.15))continue;
+    const Q=order(P),qa=polyArea(Q);if(qa<N*.03||qa>N*1.05)continue;
+    // 和紙的區域重疊程度（IoU）
+    let I=0,U=0;for(let y=0;y<h;y+=step)for(let x=0;x<w;x+=step){const ip=inPoly(Q,x+.5,y+.5),r=R[y*w+x];if(ip&&r)I++;if(ip||r)U++}
+    const iou=U?I/U:0,s=(A1.v+A3.v+B1.v+B3.v)*iou*iou;
+    if(s>bestS){bestS=s;bestQ=Q;bestIoU=iou}}
+  if(!bestQ)return null;
+  // 4. 信心分數：四條邊各有多少真的貼著畫紙邊緣
+  const near=new Uint8Array(N);for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(isE[y*w+x])for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){const xx=x+dx,yy=y+dy;if(xx>=0&&yy>=0&&xx<w&&yy<h)near[yy*w+xx]=1}
+  const cov=[];for(let i=0;i<4;i++){const a=bestQ[i],b=bestQ[(i+1)%4],L=Math.hypot(b[0]-a[0],b[1]-a[1]);let hit=0,tot=0;
+    for(let s=0;s<=L;s+=1){const x=Math.round(a[0]+(b[0]-a[0])*s/L),y=Math.round(a[1]+(b[1]-a[1])*s/L);if(x<0||y<0||x>=w||y>=h)continue;tot++;if(near[y*w+x])hit++}
+    cov.push(tot?hit/tot:0)}
+  const covMin=Math.min(...cov),covAvg=cov.reduce((s,v)=>s+v,0)/4;
+  // 角度合理（拍照的透視不會讓角超出 45°～135°）
+  let angOK=1;for(let i=0;i<4;i++){const p=bestQ[(i+3)%4],c=bestQ[i],n=bestQ[(i+1)%4];const v1=[p[0]-c[0],p[1]-c[1]],v2=[n[0]-c[0],n[1]-c[1]];
+    const ang=Math.acos(Math.max(-1,Math.min(1,(v1[0]*v2[0]+v1[1]*v2[1])/(Math.hypot(...v1)*Math.hypot(...v2)+1e-9))))*180/Math.PI;if(ang<50||ang>130)angOK=.5}
+  const outside=bestQ.some(p=>p[0]<-1||p[1]<-1||p[0]>w+1||p[1]>h+1)?.7:1;
+  const conf=Math.max(0,Math.min(1,Math.min(bestIoU*1.05,(covMin*.6+covAvg*.4)*1.25)*angOK*outside));
+  let q=bestQ.map(p=>[p[0]/k,p[1]/k]);
+  const rf=refineEdges(src,q);q=rf.q;
+  q=q.map(p=>[Math.min(src.width,Math.max(0,p[0])),Math.min(src.height,Math.max(0,p[1]))]);
+  return {q,conf,iou:bestIoU,cov,grow:rf.grow};
+}
+
+/* 精修：在較高解析度沿每條邊的法線方向找真正的顏色交界。
+   - 先把邊對準最近的強交界（提高精度）。
+   - 再往外看：如果外面是一條「均勻的淺色留白」然後才是交界，就把邊推出去（白紙留白跟桌面很像時）。 */
+function refineEdges(src,q){
+  const S=900,k=Math.min(1,S/Math.max(src.width,src.height));
+  const w=Math.round(src.width*k),h=Math.round(src.height*k);
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;const g=cv.getContext('2d');g.drawImage(src,0,0,w,h);
+  const d=g.getImageData(0,0,w,h).data;
+  const col=(x,y)=>{x=Math.round(x);y=Math.round(y);if(x<0||y<0||x>=w||y>=h)return null;const i=(y*w+x)*4,r=d[i],gg=d[i+1],b=d[i+2];return [(r+gg+b)/3,(r-gg)*1.3,((r+gg)/2-b)*1.3]};
+  const df=(a,b)=>a&&b?Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]):0;
+  const P=q.map(p=>[p[0]*k,p[1]*k]);
+  const cx=P.reduce((s,p)=>s+p[0],0)/4,cy=P.reduce((s,p)=>s+p[1],0)/4;
+  const minSide=Math.min(...P.map((p,i)=>Math.hypot(P[(i+1)%4][0]-p[0],P[(i+1)%4][1]-p[1])));
+  const maxOut=Math.round(minSide*.14),K=48,lines=[],grow=[];
+  for(let e=0;e<4;e++){
+    const a=P[e],b=P[(e+1)%4],L=Math.hypot(b[0]-a[0],b[1]-a[1]),ux=(b[0]-a[0])/L,uy=(b[1]-a[1])/L;
+    let nx=-uy,ny=ux;const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2;if((mx-cx)*nx+(my-cy)*ny<0){nx=-nx;ny=-ny}
+    const pts=[];for(let j=0;j<K;j++){const f=.12+.76*j/(K-1);pts.push([a[0]+(b[0]-a[0])*f,a[1]+(b[1]-a[1])*f])}
+    // 每個取樣點、每個偏移量的顏色
+    const T0=-8,T1=maxOut+4,prof=pts.map(p=>{const arr=[];for(let t=T0;t<=T1;t++)arr.push(col(p[0]+nx*t,p[1]+ny*t));return arr});
+    const at=(pi,t)=>prof[pi][t-T0];
+    const score=t=>{const v=[];for(let pi=0;pi<K;pi++){const A=at(pi,t-2),B=at(pi,t+2);if(A&&B)v.push(df(A,B))}if(v.length<K/3)return 0;v.sort((x,y)=>x-y);return v[Math.floor(v.length*.5)]};
+    const sc=[];for(let t=T0+2;t<=T1-2;t++)sc.push([t,score(t)]);
+    // 1. 最靠近 0 的強交界
+    let t0=0,bs=0;for(const [t,v] of sc)if(Math.abs(t)<=6&&v>bs){bs=v;t0=t}
+    if(bs<6)t0=0;
+    // 2. 往外找：留白要均勻、比外面亮或一樣、沿著邊顏色一致
+    let tOut=t0;
+    if(bs>=6||true){
+      const peaks=sc.filter(([t,v],i)=>t>t0+5&&v>=7&&(i===0||v>=sc[i-1][1])&&(i===sc.length-1||v>=sc[i+1][1]));
+      for(const [t,v] of peaks){
+        const lo=t0+3,hi=t-3;if(hi<=lo)continue;
+        const means=[],devs=[],outs=[];
+        for(let pi=0;pi<K;pi++){const c=[];for(let tt=lo;tt<=hi;tt++){const z=at(pi,tt);if(z)c.push(z)}if(c.length<2)continue;
+          const m=[0,1,2].map(j=>c.reduce((s,z)=>s+z[j],0)/c.length);means.push(m);devs.push(Math.max(...c.map(z=>df(z,m))));
+          const o=at(pi,Math.min(T1,t+4));if(o)outs.push(df(m,o)>0?o:o)}
+        if(means.length<K/2)continue;
+        devs.sort((x,y)=>x-y);const dev=devs[Math.floor(devs.length*.7)];
+        const M=[0,1,2].map(j=>means.reduce((s,z)=>s+z[j],0)/means.length);
+        const spread=means.map(m=>df(m,M)).sort((x,y)=>x-y)[Math.floor(means.length*.8)];
+        const O=[0,1,2].map(j=>outs.reduce((s,z)=>s+z[j],0)/Math.max(1,outs.length));
+        if(dev<14&&spread<10&&M[0]>=O[0]-3&&M[0]>120)tOut=t; else break}
+    }
+    grow.push(tOut-t0);
+    // 用每個取樣點自己的最強交界（在 tOut 附近 ±3）擬合直線，抗手擋：取中位數
+    const offs=[];for(let pi=0;pi<K;pi++){let bt=tOut,bv=-1;for(let t=tOut-3;t<=tOut+3;t++){if(t-2<T0||t+2>T1)continue;const v=df(at(pi,t-2),at(pi,t+2));if(v>bv){bv=v;bt=t}}offs.push(bt)}
+    offs.sort((x,y)=>x-y);const off=offs[Math.floor(K/2)];
+    lines.push({p:[mx+nx*off,my+ny*off],u:[ux,uy]})}
+  const X=(A,B)=>{const det=A.u[0]*B.u[1]-A.u[1]*B.u[0];if(Math.abs(det)<1e-6)return null;
+    const t=((B.p[0]-A.p[0])*B.u[1]-(B.p[1]-A.p[1])*B.u[0])/det;return [A.p[0]+A.u[0]*t,A.p[1]+A.u[1]*t]};
+  const out=[0,1,2,3].map(i=>X(lines[(i+3)%4],lines[i]));
+  if(out.some(p=>!p))return {q,grow};
+  return {q:out.map(p=>[p[0]/k,p[1]/k]),grow};
 }
 const fullQuad=c=>{const m=Math.round(Math.min(c.width,c.height)*.04);return [[m,m],[c.width-m,m],[c.width-m,c.height-m],[m,c.height-m]]};
 // 把四邊形拉正成長方形（透視校正）
@@ -1750,15 +1904,27 @@ function vAlbum(s){
    :`<div class="card empty"><b>還沒有照片</b>填好作品名稱，按「拍照」開始記錄</div>`}
   </div>`;
 }
+// 自動裁切的信心門檻：高於這個就不用老師看，直接算好
+const WK_OK=.75;
+function wkBusySheet(t){sheet(`<h2>${t}</h2><div class="wk-prog"><i style="width:${WK.total?Math.round(WK.done/WK.total*100):0}%"></i></div><p class="muted">照片在這支手機上處理，處理完會先給你看一眼再上傳。</p>`)}
+// 全部照片處理完：一次看全部，有問題的再點進去調
+function wkReview(){
+  const it=WK.items;if(!it.length){WK.cur=null;closeSheet();render();return}
+  const bad=it.filter(x=>x.crop&&x.conf<WK_OK).length;
+  sheet(`<h2>確認 ${it.length} 張照片</h2>
+  <p class="muted" style="margin-top:0">${bad?`有 <b>${bad}</b> 張不確定畫紙邊緣，標「請檢查」，點一下就能調整。`:'都已經自動裁切好了。'}點任何一張可以調整四個角。</p>
+  <div class="wk-rv">${it.map((x,i)=>`<button class="wk-th${x.crop&&x.conf<WK_OK?' warn':''}" onclick="App.wkEdit(${i})" aria-label="第 ${i+1} 張"><img src="${x.prev}" alt="">${!x.crop?'<i>整張</i>':x.conf<WK_OK?'<i class="w">請檢查</i>':''}</button>`).join('')}</div>
+  <div class="stack" style="margin-top:12px"><button class="btn primary block" id="wk-up" onclick="App.wkUploadAll()">全部上傳（${it.length} 張）</button>
+  <button class="btn block" onclick="App.wkCancel()">取消</button></div>`)}
 function cropSheet(){
-  const c=WK.cur.c,n=WK.total-WK.queue.length;
-  sheet(`<h2>裁切作品${WK.total>1?`（${n}/${WK.total}）`:''}</h2>
-  <p class="muted" style="margin-top:0">${WK.cur.auto?'已自動找到畫紙。':'沒找到畫紙邊緣。'}拖動四個圓點對準畫紙的四個角。</p>
+  const c=WK.cur.c,x=WK.items[WK.cur.i];
+  sheet(`<h2>調整裁切（第 ${WK.cur.i+1} 張）</h2>
+  <p class="muted" style="margin-top:0">${x.found?'':'沒找到畫紙邊緣。'}拖動四個圓點對準畫紙的四個角。</p>
   <div class="crop" id="crop" style="aspect-ratio:${c.width}/${c.height};width:min(100%,calc(54vh*${(c.width/c.height).toFixed(4)}))"><canvas id="crop-cv"></canvas>
     <svg viewBox="0 0 ${c.width} ${c.height}" preserveAspectRatio="none"><polygon id="crop-pg" points=""/></svg>
     ${[0,1,2,3].map(i=>`<i class="crop-h" data-i="${i}"></i>`).join('')}</div>
-  <div class="stack" style="margin-top:12px"><button class="btn primary block" id="wk-up" onclick="App.wkUpload(true)">裁切並上傳</button>
-  <div class="grid2"><button class="btn" onclick="App.wkUpload(false)">不裁切，整張上傳</button><button class="btn" onclick="App.wkSkip()">${WK.queue.length?'跳過這張':'取消'}</button></div></div>`);
+  <div class="stack" style="margin-top:12px"><button class="btn primary block" onclick="App.wkEditDone(true)">用這個裁切</button>
+  <div class="grid2"><button class="btn" onclick="App.wkEditDone(false)">不裁切，用整張</button><button class="btn danger" onclick="App.wkEditDel()">不要這張</button></div></div>`);
   const cv=$('#crop-cv'),k=Math.min(1,900/Math.max(c.width,c.height));cv.width=Math.round(c.width*k);cv.height=Math.round(c.height*k);cv.getContext('2d').drawImage(c,0,0,cv.width,cv.height);
   cropDraw();
   const box=$('#crop');
@@ -1775,12 +1941,17 @@ async function wkLoad(){const s=stu(WK.sid);if(!s||!s.album)return;WK.err='';
   catch(e){WK.photos=null;WK.err=errMsg(e)}
   if(UI.tab==='works')render();
 }
-async function wkNext(){
-  if(!WK.queue.length){WK.cur=null;closeSheet();render();return}
-  const f=WK.queue.shift();
-  try{const c=await fileToCanvas(f);const q=detectQuad(c);WK.cur={c,quad:q||fullQuad(c),auto:!!q};cropSheet()}
-  catch(e){toast(e.message||'讀不到這張照片');wkNext()}
-}
+// 小預覽（裁切後的樣子），只留檔案＋四角，不把大圖留在記憶體
+const wkPrev=(c,x)=>{const o=x.crop?warp(scaleCanvas(c,Math.min(1,360/Math.max(c.width,c.height))),x.quad.map(p=>p.map(v=>v*Math.min(1,360/Math.max(c.width,c.height))))):c;return scaleCanvas(o,Math.min(1,240/Math.max(o.width,o.height))).toDataURL('image/jpeg',.7)};
+async function wkPrep(files){
+  WK.items=[];WK.total=files.length;WK.done=0;wkBusySheet('自動裁切中…');
+  for(const f of files){
+    try{const c=await fileToCanvas(f);let r=null;try{r=detectPaper(c)}catch(e){r=null}
+      const x={f,quad:r?r.q:fullQuad(c),conf:r?r.conf:0,found:!!r,crop:true};x.prev=wkPrev(c,x);WK.items.push(x)}
+    catch(e){toast(e.message||'讀不到這張照片')}
+    WK.done++;const pg=$('.wk-prog i');if(pg&&pg.style)pg.style.width=Math.round(WK.done/WK.total*100)+'%';
+    await new Promise(r=>setTimeout(r,0))}
+  wkReview()}
 const worksActions={
   wkQ(v){WK.q=v;render();const i=$('#wk-q');if(i&&i.focus){i.focus();i.setSelectionRange(v.length,v.length)}},
   wkOpen(id){WK.sid=id;WK.photos=null;WK.title=null;WK.err='';render();window.scrollTo(0,0);if(stu(id).album)wkLoad()},
@@ -1796,16 +1967,25 @@ const worksActions={
     catch(e){b.disabled=false;b.textContent='建立相簿';toast('建立失敗：'+errMsg(e))}},
   wkFiles(inp){const fs=[...(inp.files||[])];inp.value='';if(!fs.length)return;
     if(!(WK.title||'').trim()){toast('請先填作品名稱');return}
-    WK.queue=fs;WK.total=fs.length;wkNext()},
-  wkSkip(){wkNext()},
-  async wkUpload(crop){if(WK.busy||!WK.cur)return;const s=stu(WK.sid),b=$('#wk-up');WK.busy=true;if(b)b.textContent='上傳中…';
-    try{const out=crop?warp(WK.cur.c,WK.cur.quad):WK.cur.c,img=toJpeg(out),thumb=thumbOf(out),pid=Date.now().toString(36)+uid();
-      const meta={work:(WK.title||'').trim(),kind:WK.kind,date:today(),at:Date.now(),thumb,w:out.width,h:out.height};
-      const a=albumsCol().doc(s.album.aid),bt=CLOUD.db.batch(),fv=firebase.firestore.FieldValue;
-      bt.set(a.collection('photos').doc(pid),meta);bt.set(a.collection('full').doc(pid),{img});bt.update(a,{count:fv.increment(1),updatedAt:fv.serverTimestamp()});
-      await bt.commit();
-      if(WK.photos)WK.photos.unshift({id:pid,...meta});s.album.count=(s.album.count||0)+1;save();WK.busy=false;toast('已上傳');wkNext()}
-    catch(e){WK.busy=false;if(b)b.textContent='裁切並上傳';toast('上傳失敗：'+errMsg(e))}},
+    wkPrep(fs)},
+  async wkEdit(i){const x=WK.items[i];if(!x||WK.busy)return;
+    try{const c=await fileToCanvas(x.f);WK.cur={c,i,quad:x.quad.map(p=>p.slice())};cropSheet()}catch(e){toast('讀不到這張照片')}},
+  wkEditDone(crop){const x=WK.items[WK.cur.i];x.crop=crop;if(crop){x.quad=WK.cur.quad;x.conf=1}x.prev=wkPrev(WK.cur.c,x);WK.cur=null;wkReview()},
+  wkEditDel(){WK.items.splice(WK.cur.i,1);WK.cur=null;wkReview()},
+  wkCancel(){WK.items=[];WK.cur=null;closeSheet()},
+  async wkUploadAll(){if(WK.busy)return;const s=stu(WK.sid),it=WK.items.slice();if(!it.length)return;WK.busy=true;
+    WK.total=it.length;WK.done=0;wkBusySheet('上傳中…');let ok=0,fail=0;const left=[];
+    const a=albumsCol().doc(s.album.aid),fv=firebase.firestore.FieldValue,base=Date.now();
+    for(const x of it){
+      try{const c=await fileToCanvas(x.f),out=x.crop?warp(c,x.quad):c,img=toJpeg(out),thumb=thumbOf(out),pid=Date.now().toString(36)+uid();
+        const meta={work:(WK.title||'').trim(),kind:WK.kind,date:today(),at:base+ok,thumb,w:out.width,h:out.height};
+        const bt=CLOUD.db.batch();bt.set(a.collection('photos').doc(pid),meta);bt.set(a.collection('full').doc(pid),{img});bt.update(a,{count:fv.increment(1),updatedAt:fv.serverTimestamp()});
+        await bt.commit();ok++;if(WK.photos)WK.photos.unshift({id:pid,...meta});s.album.count=(s.album.count||0)+1}
+      catch(e){fail++;left.push(x);WK.lastErr=errMsg(e)}
+      WK.done++;const pg=$('.wk-prog i');if(pg&&pg.style)pg.style.width=Math.round(WK.done/WK.total*100)+'%'}
+    WK.busy=false;if(ok)save();
+    if(fail){WK.items=left;wkReview();toast(`已上傳 ${ok} 張，${fail} 張失敗：${WK.lastErr}`)}
+    else{WK.items=[];closeSheet();render();toast(`已上傳 ${ok} 張`)}},
   async wkView(pid){const p=(WK.photos||[]).find(x=>x.id===pid),s=stu(WK.sid);if(!p)return;
     sheet(`<div class="row"><b>${esc(p.work||'未命名')}</b><span class="pill plan">${p.kind==='final'?'完成作品':'繪畫過程'}</span><span class="spacer"></span><span class="muted num">${p.date}</span></div>
     <img class="wk-full" id="wk-full" src="${p.thumb}" alt="${esc(p.work||'作品')}" style="aspect-ratio:${p.w}/${p.h}">
@@ -2008,6 +2188,5 @@ cloudStart();
 setTimeout(()=>{if(!CLOUD.user)checkSeed(false)},2500);
 })();
 </script>
-
 <script>if('serviceWorker' in navigator){addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}))}</script>
 </body></html>
