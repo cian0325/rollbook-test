@@ -54,6 +54,14 @@ button{font:inherit;color:inherit;cursor:pointer}
 .vnav{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12px}
 .vnav p{margin:0;opacity:.75;text-align:center;flex:1}
 .tn{font-weight:600;font-size:12px;font-family:system-ui,sans-serif;color:var(--ink-2);margin-left:8px;border:1px solid var(--line);border-radius:99px;padding:1px 8px;vertical-align:middle}
+.privacy{margin-top:20px;background:var(--card);border-radius:16px;padding:4px 18px;box-shadow:0 1px 2px rgb(24 32 46 / .05)}
+.privacy summary{cursor:pointer;padding:12px 0;font-weight:700;color:var(--indigo);list-style:none}
+.privacy summary::-webkit-details-marker{display:none}
+.privacy summary::after{content:"＋";float:right;color:var(--ink-2)}
+.privacy[open] summary::after{content:"－"}
+.privacy dl{margin:0 0 14px;font-size:14px;line-height:1.65}
+.privacy dt{font-weight:700;margin-top:10px}
+.privacy dd{margin:2px 0 0;color:var(--ink-2)}
 </style>
 </head><body>
 <div class="wrap">
@@ -69,8 +77,20 @@ button{font:inherit;color:inherit;cursor:pointer}
   <section id="album" hidden>
     <div class="head"><div><span class="eyebrow" id="a-level"></span><h1 id="a-name"></h1><p class="muted" id="a-count"></p></div><button class="btn ghost" id="out">換一組密碼</button></div>
     <div id="groups" class="wrap" style="gap:18px;margin-top:16px"></div>
-    <p class="muted" style="margin-top:20px">照片由教室老師上傳。想移除任何一張，請直接告訴老師。在大圖上長按可以儲存照片。</p>
+    <p class="muted" style="margin-top:20px">照片由教室老師上傳。在大圖上長按可以儲存照片。</p>
   </section>
+  <details class="privacy" id="privacy">
+    <summary>隱私說明</summary>
+    <dl>
+      <dt>照片做什麼用</dt><dd>記錄孩子在教室的作品和繪畫過程，給家長看孩子的學習歷程。</dd>
+      <dt>誰看得到</dt><dd>只有知道這組密碼的人。相簿不會公開在網路上，搜尋引擎也找不到；每位小朋友的密碼不同，用別人的密碼看不到這本相簿。</dd>
+      <dt>存了哪些資料</dt><dd>作品照片、作品名稱、期別、拍攝日期，以及孩子的名字和班級。照片會先在老師的手機上裁切、重新存檔，照片裡的拍攝地點等資訊會被移除。不做人臉辨識。</dd>
+      <dt>存在哪裡</dt><dd>Google 的雲端服務（Firebase），傳輸過程有加密。</dd>
+      <dt>想刪除照片</dt><dd>任何一張或整本相簿都可以請老師刪除，刪除後就看不到了。</dd>
+      <dt>密碼被別人知道了</dt><dd>請告訴老師。老師可以換一組新密碼，舊密碼會立刻失效。</dd>
+      <dt>這台手機會記住密碼</dt><dd>下次打開就不用再輸入。如果是用別人或公用的手機，看完請按「換一組密碼」，手機就不會再記住。</dd>
+    </dl>
+  </details>
 </div>
 <div class="view" id="view" hidden role="dialog" aria-modal="true" aria-label="作品大圖">
   <div class="vbar"><b id="v-title"></b><span id="v-meta"></span><button class="vbtn" id="v-close" aria-label="關閉">✕</button></div>
@@ -98,7 +118,7 @@ async function open(code,quiet){
   const c=norm(code);if(c.length<8){if(!quiet)fail('密碼是 8 個英文字母或數字，請再確認一次。');return}
   $('err').hidden=true;$('go').disabled=true;$('go').textContent='開啟中…';
   try{const id=await sha256(c),a=await fb().collection('test_albums').doc(id).get();
-    if(!a.exists){remember('');if(quiet){$('go').disabled=false;$('go').textContent='打開相簿';return}return fail('找不到這組密碼的相簿，請確認有沒有打錯。')}
+    if(!a.exists){remember('');if(quiet){$('code').value='';}if(quiet)return fail('之前記住的密碼已經失效，可能是老師換了新密碼。請向老師索取新的密碼。');return fail('找不到這組密碼的相簿，請確認有沒有打錯。')}
     const qs=await fb().collection('test_albums').doc(id).collection('photos').orderBy('at','desc').limit(400).get();
     aid=id;photos=[];qs.forEach(d=>photos.push({id:d.id,...d.data()}));remember(c);show(a.data())}
   catch(e){fail(e&&e.message==='offline'?'連不上網路，請檢查連線後再試。':'現在讀不到相簿，請稍後再試。')}

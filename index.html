@@ -1939,6 +1939,31 @@ async function wkLoad(){const s=stu(WK.sid);if(!s||!s.album)return;WK.err='';
   catch(e){WK.photos=null;WK.err=errMsg(e)}
   if(UI.tab==='works')render();
 }
+// 刪掉一本相簿（先刪照片再刪相簿本身：權限規則要讀相簿的 owner 才能刪照片）
+async function wkWipe(aid,onStep){const a=albumsCol().doc(aid),ph=await a.collection('photos').get(),ids=[];ph.forEach(d=>ids.push(d.id));
+  for(let i=0;i<ids.length;i+=200){const bt=CLOUD.db.batch();for(const pid of ids.slice(i,i+200)){bt.delete(a.collection('photos').doc(pid));bt.delete(a.collection('full').doc(pid))}await bt.commit();if(onStep)onStep(Math.min(ids.length,i+200),ids.length)}
+  await a.delete()}
+async function wkRekeyDo(id){const s=stu(id);if(!s.album||WK.busy)return;WK.busy=true;
+  const old=s.album,from=albumsCol().doc(old.aid),fv=firebase.firestore.FieldValue;let to=null;
+  WK.total=1;WK.done=0;wkBusySheet('換密碼中…');
+  const step=(d,t)=>{WK.done=d;WK.total=t||1;const pg=$('.wk-prog i');if(pg&&pg.style)pg.style.width=Math.round(d/(t||1)*100)+'%'};
+  try{const code=newCode(),aid=await sha256(codeNorm(code));to=albumsCol().doc(aid);
+    const ph=await from.collection('photos').get(),docs=[];ph.forEach(d=>docs.push(d));
+    await to.set({owner:CLOUD.user.uid,name:s.name,level:(level(s.level)||{}).name||'',count:docs.length,updatedAt:fv.serverTimestamp()});
+    // 一張一張搬：原圖每張接近 1MB，一次只送一張比較不會超過上限
+    for(let i=0;i<docs.length;i++){const d=docs[i],f=await from.collection('full').doc(d.id).get(),bt=CLOUD.db.batch();
+      bt.set(to.collection('photos').doc(d.id),d.data());if(f.exists)bt.set(to.collection('full').doc(d.id),f.data());await bt.commit();step(i+1,docs.length*2)}
+    s.album={...old,code,aid,count:docs.length,rekeyAt:today(),oldAid:old.aid};save();
+    try{await wkWipe(old.aid,(d,t)=>step(t+d,t*2));delete s.album.oldAid;save()}
+    catch(e){toast('新密碼已啟用，但舊相簿沒刪乾淨，下次打開這位學生會再試一次')}
+    WK.busy=false;WK.photos=null;if(WK.sid===id)wkLoad();render();App.wkShare(id);toast('已換新密碼，舊密碼已失效')}
+  catch(e){WK.busy=false;
+    // 搬到一半失敗：刪掉做到一半的新相簿，舊密碼照常可用
+    if(to&&s.album.aid===old.aid){try{await wkWipe(to.id)}catch(x){}}
+    closeSheet();toast('換密碼失敗，舊密碼仍可使用：'+errMsg(e))}}
+// 上次換密碼時沒刪掉的舊相簿，再試一次
+async function wkCleanOld(s){if(!s||!s.album||!s.album.oldAid||!CLOUD.user)return;
+  try{await wkWipe(s.album.oldAid);delete s.album.oldAid;save()}catch(e){}}
 // 小預覽（裁切後的樣子），只留檔案＋四角，不把大圖留在記憶體
 const wkPrev=(c,x)=>{const o=x.crop?warp(scaleCanvas(c,Math.min(1,360/Math.max(c.width,c.height))),x.quad.map(p=>p.map(v=>v*Math.min(1,360/Math.max(c.width,c.height))))):c;return scaleCanvas(o,Math.min(1,240/Math.max(o.width,o.height))).toDataURL('image/jpeg',.7)};
 async function wkPrep(files){
@@ -1952,7 +1977,7 @@ async function wkPrep(files){
   wkReview()}
 const worksActions={
   wkQ(v){WK.q=v;render();const i=$('#wk-q');if(i&&i.focus){i.focus();i.setSelectionRange(v.length,v.length)}},
-  wkOpen(id){WK.sid=id;WK.photos=null;WK.title=null;WK.term=null;WK.custom=false;WK.err='';render();window.scrollTo(0,0);if(stu(id).album)wkLoad()},
+  wkOpen(id){WK.sid=id;WK.photos=null;WK.title=null;WK.term=null;WK.custom=false;WK.err='';render();window.scrollTo(0,0);if(stu(id).album){wkLoad();wkCleanOld(stu(id))}},
   wkBack(){WK.sid=null;WK.photos=null;render()},
   wkReload(){WK.err='';render();wkLoad()},
   wkTitle(v){WK.title=v},
@@ -2017,7 +2042,11 @@ const worksActions={
     <p class="muted" style="margin:0">家長頁：<span class="num" style="word-break:break-all">${esc(url)}</span></p>
     <button class="btn primary block" onclick="App.wkCopy()">複製給家長的訊息</button>
     <textarea class="inp" id="wk-msg" rows="5" hidden></textarea>
-    <p class="muted" style="margin:0">有這組密碼就能看到這本相簿的所有照片，請只給這位學生的家長。</p></div>`)},
+    <p class="muted" style="margin:0">有這組密碼就能看到這本相簿的所有照片，請只給這位學生的家長。</p>
+    <button class="btn danger block" onclick="App.wkRekey('${id}')">換新密碼（舊密碼立刻失效）</button></div>`)},
+  // 換家長密碼：照片搬到新密碼算出的新相簿，再刪掉舊的。舊密碼從此打不開。
+  wkRekey(id){const s=stu(id);
+    confirmSheet(`幫 ${esc(s.name)} 換一組新的家長密碼？<br>照片會搬到新密碼，<b>舊密碼會立刻失效</b>，已經存在家長手機裡的舊密碼也打不開。換好後要把新密碼重新傳給家長。`,'換新密碼',()=>setTimeout(()=>wkRekeyDo(id),0),true)},
 };
 
 /* ---------- actions ---------- */
