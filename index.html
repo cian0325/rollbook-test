@@ -1745,7 +1745,7 @@ function detectPaper(src){
   const angD=(a,b)=>{const x=Math.abs(a-b)%NT;return Math.min(x,NT-x)};
   const inter=(L1,L2)=>{const a=cs[L1.t],b=sn[L1.t],c=cs[L2.t],e=sn[L2.t],det=a*e-b*c;if(Math.abs(det)<1e-6)return null;return [(L1.r*e-b*L2.r)/det,(a*L2.r-L1.r*c)/det]};
   const pairs=[];for(let i=0;i<lines.length;i++)for(let j=i+1;j<lines.length;j++){const L1=lines[i],L2=lines[j];
-    if(angD(L1.t,L2.t)<=40){const r2=(Math.abs(L1.t-L2.t)>90?-L2.r:L2.r);if(Math.abs(L1.r-r2)>=Math.min(w,h)*.12)pairs.push([L1,L2])}}
+    if(angD(L1.t,L2.t)<=55){const r2=(Math.abs(L1.t-L2.t)>90?-L2.r:L2.r);if(Math.abs(L1.r-r2)>=Math.min(w,h)*.12)pairs.push([L1,L2])}}
   const inPoly=(P,x,y)=>{let s=false;for(let i=0,j=3;i<4;j=i++){const a=P[i],b=P[j];if((a[1]>y)!==(b[1]>y)&&x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0])s=!s}return s};
   const order=P=>{const cx=P.reduce((s,p)=>s+p[0],0)/4,cy=P.reduce((s,p)=>s+p[1],0)/4;
     const o=P.slice().sort((a,b)=>Math.atan2(a[1]-cy,a[0]-cx)-Math.atan2(b[1]-cy,b[0]-cx));
@@ -1778,8 +1778,12 @@ function detectPaper(src){
   const conf=Math.max(0,Math.min(1,Math.min(bestIoU*1.05,(covMin*.6+covAvg*.4)*1.25)*angOK*outside));
   let q=bestQ.map(p=>[p[0]/k,p[1]/k]);
   const rf=refineEdges(src,q);q=rf.q;
+  const ff=refineFine(src,q);if(ff){q=ff.q;rf.fit=ff.fit}
   q=q.map(p=>[Math.min(src.width,Math.max(0,p[0])),Math.min(src.height,Math.max(0,p[1]))]);
-  return {q,conf,iou:bestIoU,cov,grow:rf.grow};
+  // 精修時每條邊有多少取樣點落在同一條直線上：太少代表那條邊不清楚（被擋住、很模糊或抓錯）
+  // fit=0 的邊是對比太低、沒有精修（沿用前一步的結果），不算在內
+  let cf=conf;if(rf.fit){const nz=rf.fit.filter(v=>v>0),mn=nz.length?Math.min(...nz):0;if(mn<.4)cf=Math.min(cf,.7)}
+  return {q,conf:cf,conf0:conf,iou:bestIoU,cov,grow:rf.grow,fit:rf.fit};
 }
 
 /* 精修：在較高解析度沿每條邊的法線方向找真正的顏色交界。
@@ -1835,6 +1839,81 @@ function refineEdges(src,q){
   const out=[0,1,2,3].map(i=>X(lines[(i+3)%4],lines[i]));
   if(out.some(p=>!p))return {q,grow};
   return {q:out.map(p=>[p[0]/k,p[1]/k]),grow};
+}
+
+/* 精修（像素以下的精度）：在原始解析度上，沿每條邊取 64 個點，
+   每個點沿法線找「顏色從裡面變成外面」的正中間位置（50% 交界，影子在交界外側所以不會被算進去），
+   再用 RANSAC 擬合直線（被手、蠟筆擋住的點自動剔除），角度也一起修正。 */
+function refineFine(src,q){
+  const S=1600,k=Math.min(1,S/Math.max(src.width,src.height));
+  const w=Math.round(src.width*k),h=Math.round(src.height*k);
+  let d;
+  if(k===1&&src.getContext){d=src.getContext('2d').getImageData(0,0,w,h).data}
+  else{const cv=document.createElement('canvas');cv.width=w;cv.height=h;const g=cv.getContext('2d');g.drawImage(src,0,0,w,h);d=g.getImageData(0,0,w,h).data}
+  const col=(x,y)=>{x=Math.round(x);y=Math.round(y);if(x<0||y<0||x>=w||y>=h)return null;const i=(y*w+x)*4,r=d[i],gg=d[i+1],b=d[i+2];return [(r+gg+b)/3,(r-gg)*1.3,((r+gg)/2-b)*1.3]};
+  const df=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);
+  const med3=a=>[0,1,2].map(j=>{const v=a.map(z=>z[j]).sort((x,y)=>x-y);return v[v.length>>1]});
+  const P=q.map(p=>[p[0]*k,p[1]*k]),cx=P.reduce((s,p)=>s+p[0],0)/4,cy=P.reduce((s,p)=>s+p[1],0)/4;
+  const minSide=Math.min(...P.map((p,i)=>Math.hypot(P[(i+1)%4][0]-p[0],P[(i+1)%4][1]-p[1])));
+  // 白邊：找到的邊外面如果緊接著一圈「顏色一致、偏亮」的帶子（畫紙留白），就沿每個點往外走到顏色改變，再擬合一次
+  function marginOut(ln,nx,ny,L){
+    const M=48,base=[],maxOut=Math.round(minSide*.12);
+    for(let j=0;j<M;j++){const f=(j/(M-1)-.5)*.84*L;base.push([ln.p[0]+ln.u[0]*f,ln.p[1]+ln.u[1]*f])}
+    const strip=[];for(const b of base){const z=med3([3,4,5,6].map(t=>col(b[0]+nx*t,b[1]+ny*t)).filter(Boolean).concat([[0,0,0]]).slice(0,4));strip.push(z)}
+    const C=med3(strip),near=strip.filter(z=>df(z,C)<16).length/M;
+    if(near<.6||C[0]<115)return null;
+    const inC=med3(base.map(b=>col(b[0]-nx*5,b[1]-ny*5)).filter(Boolean));if(df(inC,C)<14)return null;
+    const pts=[];
+    for(const b of base){let prev=0;for(let t=4;t<=maxOut;t++){const z=col(b[0]+nx*t,b[1]+ny*t);if(!z)break;const v=df(z,C);
+        if(v>=18){const z2=col(b[0]+nx*(t+1),b[1]+ny*(t+1));if(z2&&df(z2,C)>=18){pts.push([b[0]+nx*(t-1+Math.min(1,(9-prev)/Math.max(1e-6,v-prev))),b[1]+ny*(t-1+Math.min(1,(9-prev)/Math.max(1e-6,v-prev)))]);break}}prev=v}}
+    if(pts.length<M*.3)return null;
+    let bi=[];for(let it=0;it<80;it++){const p1=pts[(it*7)%pts.length],p2=pts[(it*11+(pts.length>>1))%pts.length];if(p1===p2)continue;
+      const lx=p2[0]-p1[0],ly=p2[1]-p1[1],ll=Math.hypot(lx,ly);if(ll<L*.25)continue;
+      if(Math.abs(lx*ln.u[1]-ly*ln.u[0])/ll>.05)continue;   // 要和原本的邊接近平行（約 3 度內）
+      const inl=pts.filter(p=>Math.abs((p[0]-p1[0])*ly-(p[1]-p1[1])*lx)/ll<1.5);if(inl.length>bi.length)bi=inl}
+    if(bi.length<M*.3)return null;
+    const mx=bi.reduce((s,p)=>s+p[0],0)/bi.length,my=bi.reduce((s,p)=>s+p[1],0)/bi.length;
+    let sxx=0,sxy=0,syy=0;for(const p of bi){const dx=p[0]-mx,dy=p[1]-my;sxx+=dx*dx;sxy+=dx*dy;syy+=dy*dy}
+    const th=.5*Math.atan2(2*sxy,sxx-syy),off=(mx-ln.p[0])*nx+(my-ln.p[1])*ny;
+    if(off<4)return null;
+    return {p:[mx,my],u:[Math.cos(th),Math.sin(th)],fit:bi.length/M}}
+  const R=Math.max(10,Math.round(Math.min(w,h)*.012)),K=64,lines=[],fit=[];
+  for(let e=0;e<4;e++){
+    const a=P[e],b=P[(e+1)%4],L=Math.hypot(b[0]-a[0],b[1]-a[1]),ux=(b[0]-a[0])/L,uy=(b[1]-a[1])/L;
+    let nx=-uy,ny=ux;if(((a[0]+b[0])/2-cx)*nx+((a[1]+b[1])/2-cy)*ny<0){nx=-nx;ny=-ny}
+    const pts=[];
+    for(let j=0;j<K;j++){const f=.08+.84*j/(K-1),bx=a[0]+(b[0]-a[0])*f,by=a[1]+(b[1]-a[1])*f;
+      const pr=[];for(let t=-R-6;t<=R+6;t++)pr.push(col(bx+nx*t,by+ny*t));
+      if(pr.some(z=>!z))continue;
+      const at=t=>pr[t+R+6];
+      const inn=med3([at(-R-6),at(-R-5),at(-R-4),at(-R-3)]),out=med3([at(R+3),at(R+4),at(R+5),at(R+6)]),step=df(inn,out);
+      if(step<14)continue;
+      // 從裡往外，第一個「之後至少 3 像素都超過一半」的交界
+      let hit=null;
+      for(let t=-R+1;t<=R-3;t++){const v0=df(at(t-1),inn),v1=df(at(t),inn);
+        if(v0<step/2&&v1>=step/2&&df(at(t+1),inn)>=step/2&&df(at(t+2),inn)>=step/2){hit=t-1+(step/2-v0)/Math.max(1e-6,v1-v0);break}}
+      if(hit!==null)pts.push([bx+nx*hit,by+ny*hit])}
+    // RANSAC：找最多點貼著的那條線
+    let best=null,bi=[];
+    if(pts.length>=8){for(let it=0;it<60;it++){const p1=pts[(it*7)%pts.length],p2=pts[(it*13+pts.length>>1)%pts.length];if(p1===p2)continue;
+        const lx=p2[0]-p1[0],ly=p2[1]-p1[1],ll=Math.hypot(lx,ly);if(ll<L*.25)continue;
+        const inl=pts.filter(p=>Math.abs((p[0]-p1[0])*ly-(p[1]-p1[1])*lx)/ll<1.5);if(inl.length>bi.length){bi=inl;best=1}}}
+    fit.push(bi.length/K);
+    if(!best||bi.length<K*.25){lines.push({p:[(a[0]+b[0])/2,(a[1]+b[1])/2],u:[ux,uy]});continue}
+    // 用貼著的點做最小平方（主成分方向）
+    const mx=bi.reduce((s,p)=>s+p[0],0)/bi.length,my=bi.reduce((s,p)=>s+p[1],0)/bi.length;
+    let sxx=0,sxy=0,syy=0;for(const p of bi){const dx=p[0]-mx,dy=p[1]-my;sxx+=dx*dx;sxy+=dx*dy;syy+=dy*dy}
+    const th=.5*Math.atan2(2*sxy,sxx-syy);let ln={p:[mx,my],u:[Math.cos(th),Math.sin(th)]};
+    const mg=marginOut(ln,nx,ny,L);if(mg){ln=mg;fit[fit.length-1]=Math.max(fit[fit.length-1],mg.fit)}
+    lines.push(ln)}
+  const X=(A,B)=>{const det=A.u[0]*B.u[1]-A.u[1]*B.u[0];if(Math.abs(det)<1e-6)return null;
+    const t=((B.p[0]-A.p[0])*B.u[1]-(B.p[1]-A.p[1])*B.u[0])/det;return [A.p[0]+A.u[0]*t,A.p[1]+A.u[1]*t]};
+  const out=[0,1,2,3].map(i=>X(lines[(i+3)%4],lines[i]));
+  if(out.some(p=>!p))return null;
+  // 精修後角點移動太多（超過短邊 6%）就不採用，避免抓到別的東西
+  const ms=Math.min(...P.map((p,i)=>Math.hypot(P[(i+1)%4][0]-p[0],P[(i+1)%4][1]-p[1])));
+  if(out.some((p,i)=>Math.hypot(p[0]-P[i][0],p[1]-P[i][1])>ms*.2))return {q,fit};
+  return {q:out.map(p=>[p[0]/k,p[1]/k]),fit};
 }
 const fullQuad=c=>{const m=Math.round(Math.min(c.width,c.height)*.04);return [[m,m],[c.width-m,m],[c.width-m,c.height-m],[m,c.height-m]]};
 // 把四邊形拉正成長方形（透視校正）
