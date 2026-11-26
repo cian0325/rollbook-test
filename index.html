@@ -1672,7 +1672,7 @@ function scaleCanvas(c,k){const o=document.createElement('canvas');o.width=Math.
    3. 在這塊的邊緣找 4 條最直的線（霍夫轉換），兩兩交叉 = 四個角。
       手擋住一角、紙被雜物碰到時，那段邊緣不直，不會影響其他三條邊。
    4. 回傳 {q:[左上,右上,右下,左下], conf:0~1}。conf 高才自動裁切，低的讓老師手動拖角。 */
-function detectPaper(src){
+function detectPaperV2(src){
   const S=256,k=Math.min(1,S/Math.max(src.width,src.height));
   const w=Math.max(8,Math.round(src.width*k)),h=Math.max(8,Math.round(src.height*k)),N=w*h;
   const cv=document.createElement('canvas');cv.width=w;cv.height=h;const g=cv.getContext('2d');g.drawImage(src,0,0,w,h);
@@ -1914,6 +1914,110 @@ function refineFine(src,q){
   const ms=Math.min(...P.map((p,i)=>Math.hypot(P[(i+1)%4][0]-p[0],P[(i+1)%4][1]-p[1])));
   if(out.some((p,i)=>Math.hypot(p[0]-P[i][0],p[1]-P[i][1])>ms*.2))return {q,fit};
   return {q:out.map(p=>[p[0]/k,p[1]/k]),fit};
+}
+/* 最後對準：在 1000 像素的照片上，每條邊在 ±3% 範圍內找「整條邊上顏色變化的中位數最大」的直線。
+   取中位數，所以被手、貼紙或畫擋到幾段也不受影響；只有真正從頭到尾的紙邊分數會高。 */
+function refineSnap(src,q){
+  const S=1000,k=Math.min(1,S/Math.max(src.width,src.height)),w=Math.round(src.width*k),h=Math.round(src.height*k),N=w*h;
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;const g=cv.getContext('2d');g.drawImage(src,0,0,w,h);const d=g.getImageData(0,0,w,h).data;
+  const F=new Float32Array(N*3);for(let i=0;i<N;i++){const r=d[i*4],gg=d[i*4+1],b=d[i*4+2];F[i*3]=(r+gg+b)/3;F[i*3+1]=(r-gg)*1.3;F[i*3+2]=((r+gg)/2-b)*1.3}
+  const GX=new Float32Array(N),GY=new Float32Array(N);
+  for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=y*w+x;let sx=0,sy=0;
+    for(let c=0;c<3;c++){const a=(i-w-1)*3+c,b=(i-w)*3+c,cc=(i-w+1)*3+c,dd=(i-1)*3+c,f=(i+1)*3+c,gg=(i+w-1)*3+c,hh=(i+w)*3+c,ii=(i+w+1)*3+c;
+      const gx=(F[cc]+2*F[f]+F[ii])-(F[a]+2*F[dd]+F[gg]),gy=(F[gg]+2*F[hh]+F[ii])-(F[a]+2*F[b]+F[cc]);sx+=gx*gx;sy+=gy*gy}
+    GX[i]=Math.sqrt(sx);GY[i]=Math.sqrt(sy)}
+  const bil=(A,x,y)=>{if(x<0||y<0||x>w-1.001||y>h-1.001)return 0;const x0=x|0,y0=y|0,fx=x-x0,fy=y-y0,i=y0*w+x0;return A[i]*(1-fx)*(1-fy)+A[i+1]*fx*(1-fy)+A[i+w]*(1-fx)*fy+A[i+w+1]*fx*fy};
+  const P=q.map(p=>[p[0]*k,p[1]*k]),cx=P.reduce((s,p)=>s+p[0],0)/4,cy=P.reduce((s,p)=>s+p[1],0)/4;
+  const short=Math.min(...P.map((p,i)=>Math.hypot(P[(i+1)%4][0]-p[0],P[(i+1)%4][1]-p[1]))),R=Math.max(6,Math.round(short*.03)),K=120,buf=new Float32Array(K);
+  const lines=[];let worst=1e9;
+  for(let e=0;e<4;e++){const a=P[e],b=P[(e+1)%4],L=Math.hypot(b[0]-a[0],b[1]-a[1]),ux=(b[0]-a[0])/L,uy=(b[1]-a[1])/L;
+    let nx=-uy,ny=ux;if(((a[0]+b[0])/2-cx)*nx+((a[1]+b[1])/2-cy)*ny<0){nx=-nx;ny=-ny}
+    const G=Math.abs(nx)>Math.abs(ny)?GX:GY;
+    const score=(d1,d2)=>{const x1=a[0]+nx*d1,y1=a[1]+ny*d1,x2=b[0]+nx*d2,y2=b[1]+ny*d2;
+      for(let j=0;j<K;j++){const t=.05+.9*j/(K-1);buf[j]=bil(G,x1+(x2-x1)*t,y1+(y2-y1)*t)}buf.sort();return buf[K>>1]};
+    let bs=-1,b1=0,b2=0;
+    for(let d1=-R;d1<=R;d1+=2)for(let d2=-R;d2<=R;d2+=2){const s=score(d1,d2);if(s>bs){bs=s;b1=d1;b2=d2}}
+    const c1=b1,c2=b2;for(let d1=c1-2;d1<=c1+2;d1+=.5)for(let d2=c2-2;d2<=c2+2;d2+=.5){const s=score(d1,d2);if(s>bs){bs=s;b1=d1;b2=d2}}
+    worst=Math.min(worst,bs);lines.push([a[0]+nx*b1,a[1]+ny*b1,b[0]+nx*b2,b[1]+ny*b2])}
+  const X=(A,B)=>{const rx=A[2]-A[0],ry=A[3]-A[1],sx=B[2]-B[0],sy=B[3]-B[1],c=rx*sy-ry*sx;if(Math.abs(c)<1e-9)return null;const t=((B[0]-A[0])*sy-(B[1]-A[1])*sx)/c;return [A[0]+rx*t,A[1]+ry*t]};
+  const out=[0,1,2,3].map(i=>X(lines[(i+3)%4],lines[i]));if(out.some(p=>!p))return null;
+  return {q:out.map(p=>[p[0]/k,p[1]/k]),edge:worst}}
+/* 找畫紙四角（第三版，依真實教室照片調整）
+   教室裡通常這樣拍：畫紙幾乎佔滿畫面，底下疊著其他作品、報紙或塑膠布。
+   做法：在畫面外圍每一側找「整條都有、筆直、兩邊顏色明顯不同」的邊，四條邊組合起來，
+   挑邊緣最完整、長寬比像畫紙（約 1.4）的那一組。拼貼作品中間撕過的紙邊彎彎曲曲，不會被選到。
+   畫紙在照片中間很小（四周是桌面）時，改用第二版（detectPaperV2）。 */
+function detectPaperV3(src){
+  const S=640,k=Math.min(1,S/Math.max(src.width,src.height));
+  const w=Math.max(8,Math.round(src.width*k)),h=Math.max(8,Math.round(src.height*k)),N=w*h;
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;const g=cv.getContext('2d');g.drawImage(src,0,0,w,h);
+  const d=g.getImageData(0,0,w,h).data;
+  // 顏色特徵（亮度、紅綠、黃藍），再做兩次 3×3 模糊去掉紙紋和雜訊
+  let F=new Float32Array(N*3);
+  for(let i=0;i<N;i++){const r=d[i*4],gg=d[i*4+1],b=d[i*4+2];F[i*3]=(r+gg+b)/3;F[i*3+1]=(r-gg)*1.3;F[i*3+2]=((r+gg)/2-b)*1.3}
+  const blur=A=>{const T=new Float32Array(N*3),O=new Float32Array(N*3);
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x,l=x>0?i-1:i,r=x<w-1?i+1:i;for(let c=0;c<3;c++)T[i*3+c]=(A[l*3+c]+A[i*3+c]*2+A[r*3+c])/4}
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x,u=y>0?i-w:i,dn=y<h-1?i+w:i;for(let c=0;c<3;c++)O[i*3+c]=(T[u*3+c]+T[i*3+c]*2+T[dn*3+c])/4}return O};
+  F=blur(blur(F));
+  const sA=new Float32Array(3),sB=new Float32Array(3);
+  const samp=(x,y,o)=>{if(x<0)x=0;else if(x>w-1.001)x=w-1.001;if(y<0)y=0;else if(y>h-1.001)y=h-1.001;
+    const x0=x|0,y0=y|0,fx=x-x0,fy=y-y0,i00=(y0*w+x0)*3,i10=i00+3,i01=i00+w*3,i11=i01+3;
+    for(let c=0;c<3;c++)o[c]=F[i00+c]*(1-fx)*(1-fy)+F[i10+c]*fx*(1-fy)+F[i01+c]*(1-fx)*fy+F[i11+c]*fx*fy};
+  const dist=()=>Math.hypot(sA[0]-sB[0],sA[1]-sB[1],sA[2]-sB[2]);
+  // 一條線的邊緣分數：沿線取 K 點，每點在法線 ±4 找顏色變化最大的位置；
+  // 涵蓋率 = 有清楚邊緣的點的比例；筆直度 = 那些位置的中位數絕對偏差
+  const TH=22,offs=[];for(let o=-4;o<=4;o++)offs.push(o);
+  function lineEval(x1,y1,x2,y2,nx,ny,K){let hits=0;const pos=[];
+    for(let j=0;j<K;j++){const t=.03+.94*j/(K-1),px=x1+(x2-x1)*t,py=y1+(y2-y1)*t;let gm=-1,bo=0;
+      for(const o of offs){const qx=px+nx*o,qy=py+ny*o;samp(qx+nx*1.5,qy+ny*1.5,sA);samp(qx-nx*1.5,qy-ny*1.5,sB);const v=dist();if(v>gm){gm=v;bo=o}}
+      if(gm<=TH)continue;
+      const qx=px+nx*bo,qy=py+ny*bo;samp(qx+nx*5,qy+ny*5,sA);samp(qx-nx*5,qy-ny*5,sB);
+      if(dist()>TH*.8){hits++;pos.push(bo)}}
+    let mad=9;if(pos.length>=6){pos.sort((a,b)=>a-b);const m=pos[pos.length>>1];const dv=pos.map(v=>Math.abs(v-m)).sort((a,b)=>a-b);mad=dv[dv.length>>1]}
+    const cov=hits/K;return cov*Math.exp(-((mad/1.2)**2))}
+  // 每一側的候選邊（外圍 18% 範圍內，兩端各自位移，傾斜不超過 18%）
+  function cands(side){const horiz=side==='T'||side==='B',L=horiz?w:h,D=horiz?h:w,lim=Math.round(D*.18),out=[];
+    for(let d1=0;d1<lim;d1+=3)for(let d2=0;d2<lim;d2+=3){if(Math.abs(d1-d2)>.18*L)continue;let L1;
+      if(side==='T')L1=[0,d1,w-1,d2,0,1];else if(side==='B')L1=[0,h-1-d1,w-1,h-1-d2,0,-1];
+      else if(side==='L')L1=[d1,0,d2,h-1,1,0];else L1=[w-1-d1,0,w-1-d2,h-1,-1,0];
+      const s=lineEval(L1[0],L1[1],L1[2],L1[3],L1[4],L1[5],48);if(s>.15)out.push({s,in:(d1+d2)/2,L:L1})}
+    out.sort((a,b)=>b.s-a.s);const keep=[];
+    for(const r of out){if(keep.every(k=>Math.abs(r.in-k.in)>6||Math.abs(r.L[0]-k.L[0])+Math.abs(r.L[1]-k.L[1])+Math.abs(r.L[2]-k.L[2])+Math.abs(r.L[3]-k.L[3])>16))keep.push(r);if(keep.length>=8)break}
+    return keep}
+  const C={T:cands('T'),R:cands('R'),B:cands('B'),L:cands('L')};
+  if(!C.T.length||!C.R.length||!C.B.length||!C.L.length)return null;
+  const X=(A,B)=>{const rx=A[2]-A[0],ry=A[3]-A[1],sx=B[2]-B[0],sy=B[3]-B[1],c=rx*sy-ry*sx;if(Math.abs(c)<1e-9)return null;
+    const t=((B[0]-A[0])*sy-(B[1]-A[1])*sx)/c;return [A[0]+rx*t,A[1]+ry*t]};
+  const hyp=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+  let best=null;
+  for(const t of C.T)for(const r of C.R)for(const b of C.B)for(const l of C.L){
+    const Q=[X(l.L,t.L),X(t.L,r.L),X(r.L,b.L),X(b.L,l.L)];if(Q.some(p=>!p))continue;
+    const dAx=Q[2][0]-Q[0][0],dAy=Q[2][1]-Q[0][1],dBx=Q[3][0]-Q[1][0],dBy=Q[3][1]-Q[1][1],area=Math.abs(dAx*dBy-dAy*dBx)/2/N;
+    if(area<.35)continue;
+    // 畫紙比例（八開、四開、A4 約 1.38～1.45）：差太多的框扣分；先算，太離譜的就不必細看
+    const wq=(hyp(Q[0],Q[1])+hyp(Q[3],Q[2]))/2,hq=(hyp(Q[0],Q[3])+hyp(Q[1],Q[2]))/2,rr=Math.max(wq,hq)/Math.max(1e-6,Math.min(wq,hq));
+    const dd=Math.max(0,Math.abs(rr-1.40)-.07),pr=Math.exp(-((dd/.06)**2));if(pr<.05)continue;
+    // 四段實際的邊重新評分
+    const sc=[t,r,b,l].map((ln,e)=>{const p1=Q[e],p2=Q[(e+1)%4];return lineEval(p1[0],p1[1],p2[0],p2[1],ln.L[4],ln.L[5],64)});
+    const mn=Math.min(...sc),s=(mn*.5+sc.reduce((a,v)=>a+v,0)/8)*pr,inner=t.in+r.in+b.in+l.in;
+    if(!best||s>best.s+.02||(Math.abs(s-best.s)<=.02&&inner>best.inner))best={s,inner,Q,mn}}
+  if(!best)return null;
+  let q=best.Q.map(p=>[p[0]/k,p[1]/k]);
+  // 最後在高解析度上對準真正的紙邊（refineSnap）
+  try{const sn=refineSnap(src,q);if(sn&&sn.q)q=sn.q}catch(e){}
+  q=q.map(p=>[Math.min(src.width,Math.max(0,p[0])),Math.min(src.height,Math.max(0,p[1]))]);
+  return {q,conf:Math.max(0,Math.min(1,best.mn)),v:3};
+}
+// 兩種情況都處理：畫紙佔滿畫面（第三版）／畫紙小小放在桌上（第二版）
+function detectPaper(src){
+  let a=null,b=null;
+  try{a=detectPaperV3(src)}catch(e){a=null}
+  if(a&&a.conf>=.35)return a;
+  // 第三版沒把握時才看第二版：第二版的框要夠大（不是畫裡的一小塊），而且比較有把握
+  try{b=detectPaperV2(src)}catch(e){b=null}
+  const big=r=>{if(!r||!r.q)return 0;const q=r.q;return Math.abs((q[2][0]-q[0][0])*(q[3][1]-q[1][1])-(q[2][1]-q[0][1])*(q[3][0]-q[1][0]))/2/(src.width*src.height)};
+  if(b&&!a)return b;if(!b)return a;
+  return (b.conf>a.conf+.15&&big(b)>.2)?b:a;
 }
 const fullQuad=c=>{const m=Math.round(Math.min(c.width,c.height)*.04);return [[m,m],[c.width-m,m],[c.width-m,c.height-m],[m,c.height-m]]};
 // 把四邊形拉正成長方形（透視校正）
