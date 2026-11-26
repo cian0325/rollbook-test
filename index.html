@@ -25,6 +25,9 @@
 .slot-head .slot-time b{font-size:var(--fs-lg)}
 .slot-head .slot-time small{font-size:var(--fs-xs);color:var(--ink-2)}
 .slot-head .chev{color:var(--ink-3);font-size:var(--fs-lg)}
+.mk-miss{color:var(--seal);font-weight:600}
+.wk-days button.on .mk-miss{color:var(--card)}
+.mk-sub{font-size:var(--fs-xs);color:var(--ink-2);padding:8px 16px 4px;border-top:1px solid var(--line);background:var(--soft)}
 </style>
 </head><body>
 <script>window.FIREBASE_CONFIG={apiKey:"AIzaSyDb96G_R9sEMudHAW6v5avvnMzE0c-4wXY",authDomain:"rollbook-cb3af.firebaseapp.com",projectId:"rollbook-cb3af",storageBucket:"rollbook-cb3af.firebasestorage.app",messagingSenderId:"643279455251",appId:"1:643279455251:web:549f12c03f17425a98abe6"};</script>
@@ -532,7 +535,7 @@ function seed(){
 }
 
 /* ---------- UI ---------- */
-const UI={sv:'week',swd:null,sslot:null,walkins:{},month:null,mOnly:true,week:0,tab:'roll',date:today(),key:null,q:'',lv:'all',payFilter:'all',termId:null,open:{},drafts:{},editing:{}};
+const UI={sv:'week',swd:null,sslot:null,mv:'week',mwd:null,mslot:null,walkins:{},month:null,mOnly:true,week:0,tab:'roll',date:today(),key:null,q:'',lv:'all',payFilter:'all',termId:null,open:{},drafts:{},editing:{}};
 // 作品（拍照）功能開關：正式版在 index.html 設 window.HIDE_WORKS=true 先不開放
 const WORKS_ON=!window.HIDE_WORKS;
 if(!WORKS_ON){const b=document.querySelector('#tabs button[data-tab="works"]');if(b)b.remove()}
@@ -640,6 +643,8 @@ function vMakeup(){
   const te=termEndInfo();
   return `<div class="stack">
   ${te?`<button class="te-card" onclick="App.termEnd()"><div><b>期末未補課清單</b><span>${esc(te.T.name)}${te.days>=0?` 剩 ${te.days} 天結束`:' 已結束'} · ${te.rows.length} 位學生、${te.total} 堂未補，將折抵${esc(te.N.name)}</span></div><i>查看 ›</i></button>`:''}
+  <div class="seg wide"><button class="${UI.mv==='week'?'on':''}" onclick="App.mv('week')">依星期</button><button class="${UI.mv!=='week'?'on':''}" onclick="App.mv('list')">依學生</button></div>
+  ${UI.mv==='week'?vMkWeek(pend,up):`
   <h3 class="sec-title" style="margin:0">待補課 <span class="num muted">${pend.length}</span></h3>
   ${pend.length?`<div class="card">${Object.entries(groups).map(([sid,rs])=>{const s=stu(sid);return `<button class="li" onclick="App.mkStu('${sid}')">${av(s)}<div class="main"><div class="t">${esc(s.name)} ${lvTag(s)}</div>
     <div class="mk-dates">${rs.map(r=>`<span class="${S.makeups.some(m=>m.absId===r.id)?'again':''}">${md(r.date)}</span>`).join('')}</div></div><span class="mk-n">${rs.length}<small>堂</small></span></button>`}).join('')}</div>
@@ -649,12 +654,45 @@ function vMakeup(){
   ${up.length?`<div class="card">${up.map(m=>{const s=stu(m.sid),ab=absOf(m),st=mkStatus(m);return `<div class="li"><div class="main"><div class="t">${esc(s.name)} <span class="pill ${st==='scheduled'?'mkp':'unpaid'}">${MK[st]}</span></div>
     <div class="s">${mdwk(m.date)} ${esc(slotText(slot(m.slotId)))}${ab?` · 補 ${md(ab.date)} 的課`:''}</div></div>
     <div class="row" style="flex-wrap:nowrap">${st==='overdue'?`<button class="btn sm" onclick="App.gotoRoll('${m.date}','${m.slotId}')">去點名</button>`:''}${st==='scheduled'?`<button class="btn sm" aria-label="加入行事曆" onclick="App.icsOne('${m.id}')">行事曆</button>`:''}<button class="btn sm" onclick="App.mkForm('${m.absId||''}','${m.id}')">改</button></div></div>`}).join('')}</div>`
-  :`<div class="card empty"><b>目前沒有排定的補課</b>在上面按「安排補課」選日期和時段</div>`}
+  :`<div class="card empty"><b>目前沒有排定的補課</b>在上面按「安排補課」選日期和時段</div>`}`}
   ${done.length?`<h3 class="sec-title" style="margin:0">最近補課紀錄</h3><div class="card">${done.map(m=>{const s=stu(m.sid),ab=absOf(m),st=mkStatus(m);return `<div class="li"><div class="main"><div class="t">${esc(s.name)} <span class="pill ${st==='failed'?'unpaid':'paid'}">${MK[st]}</span></div><div class="s">${st==='credited'?`${md(ab?ab.date:m.date)} 沒來的課折抵 ${esc((termById(m.termId)||{}).name||'下期')} 學費`:`${mdwk(m.date)} ${esc(slotText(slot(m.slotId)))}${ab?` · 補 ${md(ab.date)}`:''}`}</div></div></div>`}).join('')}</div>`:''}
   <h3 class="sec-title" style="margin:0">固定時段調整</h3>
   <div class="card">${S.students.filter(s=>s.active).sort((a,b)=>(curSlot(a)||'').localeCompare(curSlot(b)||'')).map(s=>{const hs=(s.slotHist||[]).slice().sort((a,b)=>b.from.localeCompare(a.from)),fut=hs.find(h=>h.from>td);
     return `<button class="li" onclick="App.slotForm('${s.id}')"><div class="main"><div class="t">${esc(s.name)}</div><div class="s">${esc(slotFull(slot(slotOn(s,td)||curSlot(s))))}${fut?` → <span style="color:var(--indigo)">${md(fut.from)} 起 ${esc(slotText(slot(fut.slotId)))}</span>`:''}</div></div><span class="muted">調整 ›</span></button>`}).join('')||'<div class="empty">還沒有學生</div>'}</div>
   <p class="muted">提醒會顯示在「點名」頁上方和這個分頁的數字標記。</p></div>`;
+}
+/* 調課：依星期 → 時段。每個時段列出「這堂沒來、還沒補的學生」和「排到這個時段來補課的學生」。 */
+function vMkWeek(pend,up){
+  const slots=slotsSorted(),miss={},come={};
+  for(const r of pend)(miss[r.key]=miss[r.key]||[]).push(r);
+  for(const m of up)(come[m.slotId]=come[m.slotId]||[]).push(m);
+  const days=[1,2,3,4,5,6,0].filter(d=>slots.some(x=>x.wd===d));
+  const cnt=d=>{let a=0,b=0;for(const x of slots)if(x.wd===d){a+=new Set((miss[x.id]||[]).map(r=>r.sid)).size;b+=(come[x.id]||[]).length}return [a,b]};
+  // 時段被刪掉或沒排星期的
+  const orphanMiss=pend.filter(r=>{const x=slot(r.key);return !x||x.wd==null||x.wd===''}),orphanCome=up.filter(m=>{const x=slot(m.slotId);return !x||x.wd==null||x.wd===''});
+  const todayWd=parse(today()).getDay(),extra=orphanMiss.length+orphanCome.length;
+  if(UI.mwd===null||(UI.mwd!=='x'&&!days.includes(UI.mwd))){const busy=days.filter(d=>cnt(d)[0]+cnt(d)[1]);UI.mwd=busy.includes(todayWd)?todayWd:(busy[0]??(days.includes(todayWd)?todayWd:(days[0]??'x')))}
+  const tabs=`<div class="wk-days">${days.map(d=>{const [a,b]=cnt(d);return `<button class="${UI.mwd===d?'on':''}${d===todayWd?' today':''}" onclick="App.mwd(${d})"><b>${WD[d]}</b><small class="num">${a?`<span class="mk-miss">待補 ${a}</span>`:b?`補課 ${b}`:'—'}</small></button>`}).join('')}${extra?`<button class="${UI.mwd==='x'?'on':''}" onclick="App.mwd('x')"><b>其他</b><small class="num">${extra}</small></button>`:''}</div>`;
+  const missRows=rs=>{const g={};rs.forEach(r=>(g[r.sid]=g[r.sid]||[]).push(r));
+    return Object.entries(g).map(([sid,a])=>{const s=stu(sid);return `<button class="li" onclick="App.mkStu('${sid}')">${av(s)}<div class="main"><div class="t">${esc(s.name)}</div>
+      <div class="mk-dates">${a.map(r=>`<span class="${S.makeups.some(m=>m.absId===r.id)?'again':''}">${md(r.date)}</span>`).join('')}</div></div><span class="mk-n">${a.length}<small>堂</small></span></button>`}).join('')};
+  const comeRows=ms=>ms.slice().sort((a,b)=>a.date.localeCompare(b.date)).map(m=>{const s=stu(m.sid),st=mkStatus(m),ab=S.records.find(r=>r.id===m.absId);
+    return `<button class="li" onclick="App.mkForm('${m.absId||''}','${m.id}')">${av(s)}<div class="main"><div class="t">${esc(s.name)} <span class="pill ${st==='scheduled'?'mkp':'unpaid'}">${MK[st]}</span></div>
+      <div class="s">${mdwk(m.date)} 來補課${ab?` · 補 ${md(ab.date)} 的課`:' · 加課'}</div></div><span class="muted">改 ›</span></button>`}).join('');
+  const block=(x,rs,ms)=>{const open=UI.mslot===x.id||UI.mslot==='all',lv=level(x.level),ns=new Set(rs.map(r=>r.sid)).size;
+    return `<div class="card"><button class="li slot-head" onclick="App.mslot('${x.id}')" aria-expanded="${open}">
+      <div class="slot-time num"><b>${esc(x.start)}</b><small>${esc(x.end||'')}</small></div>
+      <div class="main"><div class="t">${lv?`<span class="lv lv${lv.tone%6}">${esc(lv.name)}</span>`:''} ${esc(x.name||'')}</div>
+        <div class="s">${ns?`<span class="mk-miss">待補 ${ns} 位・${rs.length} 堂</span>`:'沒有待補'}${ms.length?` · 補課 ${ms.length} 位`:''}</div></div>
+      <span class="chev">${open?'▾':'▸'}</span></button>
+      ${open?(rs.length||ms.length?`${rs.length?`<div class="mk-sub">這堂沒來、還沒補</div>${missRows(rs)}`:''}${ms.length?`<div class="mk-sub">排到這個時段補課</div>${comeRows(ms)}`:''}`:'<div class="empty" style="padding:14px">這個時段沒有要處理的</div>'):''}</div>`};
+  let body;
+  if(UI.mwd==='x')body=(orphanMiss.length?`<div class="card"><div class="mk-sub">時段已刪除或未排星期</div>${missRows(orphanMiss)}</div>`:'')+(orphanCome.length?`<div class="card"><div class="mk-sub">補課（時段已刪除）</div>${comeRows(orphanCome)}</div>`:'');
+  else{const xs=slots.filter(x=>x.wd===UI.mwd);body=xs.length?xs.map(x=>block(x,miss[x.id]||[],come[x.id]||[])).join(''):'<div class="card empty"><b>這天沒有課</b></div>'}
+  return `${tabs}
+  ${days.length||extra?`<div class="row"><span class="muted">待補 ${pend.length} 堂 · 已排補課 ${up.length} 位</span><span class="spacer"></span><button class="btn ghost sm" onclick="App.mslot('all')">${UI.mslot==='all'?'全部收起':'全部展開'}</button></div>${body}
+  <p class="muted" style="margin:0">點學生可以安排補課或折抵學費。紅色日期是補課又沒來的。</p>`:'<div class="card empty"><b>還沒有時段</b>到「設定 → 時段」新增每週的上課時段</div>'}
+  ${up.some(m=>mkStatus(m)==='scheduled')?`<button class="btn block" onclick="App.icsAll()">已排定的補課全部加入行事曆</button>`:''}`;
 }
 // 一位學生的待補課：每堂都可以安排補課或折抵
 function mkStuSheet(sid){const s=stu(sid),rs=pendingAbs().filter(r=>r.sid===sid),td=today();
@@ -2391,6 +2429,9 @@ const App=window.App={
     confirmSheet(`把 ${esc(stu(r.sid).name)} ${mdwk(r.date)} 沒來的課，折抵「${esc(T.name)}」的學費？下期需繳的堂數會少 1 堂。${S.purchases.some(p=>p.sid===r.sid&&p.termId===T.id)?'<br><b>這期的繳費單已經開了，請手動修改金額。</b>':''}`,'折抵學費',()=>{S.makeups.push({id:uid(),sid:r.sid,absId:rid,type:'credit',termId:T.id,date:T.start,slotId:null});save();render();toast('已折抵下期學費')},false)},
   sfLv(){const l=$('#sf-level').value,sel=$('#sf-slot');if(!sel)return;const x=slotsSorted().find(x=>x.level===l);if(x)sel.value=x.id},
   sv(v){UI.sv=v;render()},
+  mv(v){UI.mv=v;render()},
+  mwd(d){UI.mwd=d;UI.mslot=UI.mslot==='all'?'all':null;render()},
+  mslot(id){UI.mslot=id==='all'?(UI.mslot==='all'?null:'all'):(UI.mslot===id?null:id);render()},
   swd(d){UI.swd=d;UI.sslot=UI.sslot==='all'?'all':null;render()},
   sslot(id){UI.sslot=id==='all'?(UI.sslot==='all'?null:'all'):(UI.sslot===id?null:id);render()},
   lvf(v){UI.lv=UI.lv===v&&v!=='all'?'all':v;render()},
