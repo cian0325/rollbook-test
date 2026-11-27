@@ -857,8 +857,10 @@ function payForm(sid,pid,opt){
   const defTerm=p&&p.termId?p.termId:opt.termId?opt.termId:(()=>{const n=cur&&nextTerm(cur);const has=cur&&S.purchases.some(x=>x.sid===sid&&x.termId===cur.id);return ((has&&n)?n:(cur||termsSorted().slice(-1)[0]||{})).id})();
   sheet(`<h2>${p?'編輯繳費':'購買堂數'}</h2><div class="stack">
   <label class="f">學生<select id="pf-sid" onchange="App.pfFill(true)" ${p?'disabled':''}>${actives.map(x=>`<option value="${x.id}" ${x.id===sid?'selected':''}>${esc(x.name)}（${esc(slotText(slot(curSlot(x))))}）</option>`).join('')}</select></label>
-  <div class="seg" id="pf-kind" data-v="${kind}"><button class="${kind==='term'?'on':''}" onclick="App.pfKind('term')">整期</button><button class="${kind==='points'?'on':''}" onclick="App.pfKind('points')">點數</button></div>
-  <label class="f" id="pf-term-w" ${kind==='term'?'':'hidden'}>期別<select id="pf-term" onchange="App.pfFill(true)">${termsSorted().map(x=>`<option value="${x.id}" ${x.id===defTerm?'selected':''}>${esc(x.name)}（${md(x.start)}–${md(tEnd(x))}，${x.weeks} 週）</option>`).join('')}</select></label>
+  <div class="seg" id="pf-kind" data-v="${kind}"><button class="${kind==='term'?'on':''}" ${p?'disabled':''} onclick="App.pfKind('term')">整期</button><button class="${kind==='points'?'on':''}" ${p?'disabled':''} onclick="App.pfKind('points')">點數</button></div>
+  ${p&&kind==='term'?`<div class="hint">這筆是 <b>${esc((termById(p.termId)||{}).name||'')}</b> 的繳費，期別不能改。<br>要繳下一期，請按「＋購買堂數」新增一筆，這筆會保留。
+    <button class="btn sm primary" style="margin-top:8px" onclick="App.payForm('${sid}')">＋ 新增下一期的繳費</button></div>`:''}
+  <label class="f" id="pf-term-w" ${kind==='term'?'':'hidden'}>期別<select id="pf-term" onchange="App.pfFill(true)" ${p?'disabled':''}>${termsSorted().map(x=>`<option value="${x.id}" ${x.id===defTerm?'selected':''}>${esc(x.name)}（${md(x.start)}–${md(tEnd(x))}，${x.weeks} 週）</option>`).join('')}</select></label>
   <div class="chips" id="pf-pts" ${kind==='points'?'':'hidden'}>${[5,10,20,30].map(n=>`<button class="chip" onclick="App.pfPts(${n})">${n} 堂</button>`).join('')}</div>
   <div class="hint" id="pf-hint" hidden></div>
   <div id="pf-credit" class="stack" style="gap:6px" hidden></div>
@@ -2514,7 +2516,7 @@ const App=window.App={
   savePay(pid){const raw=$('#pf-lessons').value;if(raw===''||+raw<0){toast('請輸入堂數');return}
     const k=$('#pf-kind').dataset.v,paid=$('#pf-paid').checked,date=$('#pf-date').value||today();
     const d={sid:$('#pf-sid').value,kind:k,termId:k==='term'?$('#pf-term').value:null,lessons:+raw,amount:+$('#pf-amount').value||0,date,paid,method:$('#pf-method').value,note:$('#pf-note').value.trim()};
-    if(pid){const p=S.purchases.find(x=>x.id===pid),was=p.paid;Object.assign(p,d);p.paidDate=paid?(was&&p.paidDate?p.paidDate:today()):''}
+    if(pid){const p=S.purchases.find(x=>x.id===pid),was=p.paid;d.kind=p.kind;d.termId=p.termId;Object.assign(p,d);p.paidDate=paid?(was&&p.paidDate?p.paidDate:today()):''}
     else{const np={id:uid(),...d,paidDate:paid?date:''};
       if(k==='term'){np.adj=+$('#pf-adj').value||0;np.adjReason=$('#pf-adjr').value.trim();const T=termById(d.termId);
         document.querySelectorAll('.pf-cr').forEach(x=>{if(x.checked)S.makeups.push({id:uid(),sid:d.sid,absId:x.value,type:'credit',termId:d.termId,purchaseId:np.id,date:T?T.start:date,slotId:null})})}
